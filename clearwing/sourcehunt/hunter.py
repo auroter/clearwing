@@ -1453,6 +1453,17 @@ class NativeHunter:
                     messages=messages,
                     system=self.prompt,
                     tools=self.tools,
+                    # Prompt caching: mark the growing prefix cacheable so each
+                    # turn re-reads system + tools + prior history from cache
+                    # instead of paying full input price to re-send it. This is
+                    # a transport/billing hint only — the model still receives
+                    # byte-identical input, so findings are unchanged. Inert on
+                    # providers without caching. The key is stable per hunt so
+                    # OpenAI-style routing keeps hitting the same prefix cache.
+                    cache_prefix=True,
+                    prompt_cache_key=(
+                        f"{self.ctx.session_id or ''}:{self.ctx.work_item_id or ''}"
+                    ),
                 )
             # Preserve the provider's reasoning_content alongside the
             # visible text. `response.first_text` only returns the
