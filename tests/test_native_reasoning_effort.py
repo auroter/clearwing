@@ -60,6 +60,18 @@ class TestAutoResolveReasoningEffort:
         result = AsyncLLMClient._auto_resolve_reasoning_effort(model)
         assert result is None
 
+    def test_deepseek_v4_flash_resolves_to_none_string(self):
+        # The literal string "none" (thinking off), NOT Python None (omit
+        # param): probing the endpoint showed only reasoning_effort="none"
+        # actually suppresses this model's thinking — "low" is identical to
+        # full thinking, and omitting the param leaves thinking on.
+        result = AsyncLLMClient._auto_resolve_reasoning_effort("deepseek-v4-flash")
+        assert result == "none"
+
+    def test_deepseek_v4_flash_match_is_case_insensitive(self):
+        result = AsyncLLMClient._auto_resolve_reasoning_effort("DeepSeek-V4-Flash")
+        assert result == "none"
+
     def test_mistral_resolves_to_none(self):
         result = AsyncLLMClient._auto_resolve_reasoning_effort("mistral-large-2407")
         assert result is None
