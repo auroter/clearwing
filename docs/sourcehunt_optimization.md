@@ -2583,3 +2583,69 @@ reproduces ranks 1093–1116 and their committed manifest and SHA-256 exactly. T
 next unchanged exact-path manifest seals ranks 1117–1140 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1117_1140.json` with SHA-256
 `5ed7257f74c66a62b8faca10f25b9966993efa0c088cf41189dbe9d33076e243`.
+
+### Blind wave 1117–1140 and two memory-safety roots
+
+The sealed run completed all 24 exact-path trajectories with a successful
+source-bearing action. It used 6,782,282 tokens over 768 model calls, made 169
+candidate/finding calls, performed 29 automatic context compactions, and had no
+model or tool failures. Its single formal finding was rejected offline. The
+replacement inference endpoint completed the run without reported failures.
+
+Offline review confirmed a dynamically reproduced root in the RTP/AAC
+packetizer. When stream extradata is absent, `ff_rtp_send_aac` assumes a
+seven-byte in-band ADTS header and subtracts seven without checking the packet
+size. A one-byte public packet becomes size -6, satisfies the ordinary
+single-packet branch, and reaches `memcpy` with that negative length. A direct
+production-packetizer harness deterministically aborts under ASan with
+`negative-size-param` in `ff_rtp_send_aac`. Later FFmpeg repair
+`c77a16487a37ae450fa8ea5a94fd6488e40277b7` independently confirms the root by
+adding the exact missing `size < 7` guard.
+
+Review also confirmed a GPU out-of-bounds write in `overlay_cuda`. The host
+rounds the main plane dimensions up to complete 32x16 CUDA blocks, but the
+kernel receives no main width or height and clips threads only to the overlay
+rectangle. A valid 32x18 NV12 main frame with a 32x32 overlay at the origin
+therefore leaves rounded threads enabled through luma row 31 and chroma row 15.
+With a normalized 32-byte pitch, the main allocation is 864 bytes while the
+last luma and chroma writes reach offsets 1023 and 1087, overrunning it by 160
+and 224 bytes respectively. Larger aligned CUDA pitches preserve and increase
+the out-of-bounds relationship. No CUDA runtime was available locally, so this
+root is source- and exact-geometry-confirmed rather than sanitizer-observed.
+
+The durable artifacts are
+`evaluations/ffmpeg_rtp_aac_short_adts_reproducer.c`,
+`evaluations/run_ffmpeg_rtp_aac_short_adts_reproducer.py`, and
+`evaluations/run_ffmpeg_overlay_cuda_grid_proof.py`. The ignored proof records
+are
+`results/sourcehunt-optimization/rtp-aac-short-adts-reproducer.json` and
+`results/sourcehunt-optimization/overlay-cuda-grid-proof.json`; both record
+`expected_observed=true` at pinned FFmpeg commit
+`795bccdaf57772b1803914dee2f32d52776518e2`.
+
+The formal Sun Raster finding is not a vulnerability: the extra trigger and
+run reads remain inside the mandatory zeroed `AV_INPUT_BUFFER_PADDING_SIZE`
+tail. Aura consumes exactly one row, DCA's oversized frame value only delays
+marker acceptance, and SWF's zero denominator requires a malformed public time
+base. H.261 and LATM reject their proposed negative sizes, while unsharp,
+RIPEMD, PCM rechunk, FLAC picture, silence detection, GSM, and DV marker paths
+retain their arithmetic and allocation bounds.
+
+The remaining candidates close under producer or API contracts. CUDA transfer
+would require a malformed caller-supplied `AVFrame`; KMS relies on trusted
+kernel mapping metadata; transpose NPP receives already-validated hardware
+frame dimensions; libwebp retains cloned or refcounted planes; and OpenCORE AMR
+rejects the empty-packet theory before its decoder callback. Premultiply and
+pseudocolor are bounded by negotiated plane geometry and the complete 65,536
+entry LUT. Murmur3 retains only a possible hash-correctness edge case at
+`state_pos == 16`, not a memory-safety issue.
+
+The two files add distinct roots. Current totals are 60 confirmed root causes
+and 50 dynamically reproduced issues. Coverage is 1,140/4,995 (22.82%), with
+3,855 historically ranked files remaining.
+
+Directly slicing this machine's unchanged 4,995-file deterministic order
+reproduces ranks 1117–1140 and their committed manifest and SHA-256 exactly. The
+next unchanged exact-path manifest seals ranks 1141–1164 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1141_1164.json` with SHA-256
+`6807fee70ca54862a07d9bf371a8648ed7ca311a6583efd2357cfec1a06fa3f9`.

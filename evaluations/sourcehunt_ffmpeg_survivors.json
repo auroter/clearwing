@@ -2259,5 +2259,155 @@
         "end": 306
       }
     ]
+  },
+  {
+    "case_id": "rtp-aac-short-adts-negative-copy",
+    "finding": {
+      "id": "ffmpeg-rtp-aac-short-adts-negative-copy",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavformat/rtpenc_aac.c",
+      "line_number": 69,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "When AAC stream extradata is absent, the RTP packetizer assumes that every packet starts with a seven-byte ADTS header and subtracts seven without checking the packet size. A public one-byte packet therefore becomes size -6, which satisfies the size <= max_packet_size branch and reaches memcpy as a negative int converted to size_t. A direct production-packetizer harness deterministically aborts under ASan with negative-size-param in ff_rtp_send_aac. Later FFmpeg repair c77a16487a37ae450fa8ea5a94fd6488e40277b7 adds the exact missing size < 7 guard.",
+      "code_snippet": "if (extradata_size == 0) { size -= 7; buff += 7; } ... memcpy(s->buf_ptr, buff, size);",
+      "poc": "Build and run evaluations/ffmpeg_rtp_aac_short_adts_reproducer.c with evaluations/run_ffmpeg_rtp_aac_short_adts_reproducer.py against the configured pinned checkout.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "an undersized AAC packet loses an assumed seven-byte ADTS header, turns the copy length negative, and reaches memcpy with that invalid length",
+        "steps": [
+          {
+            "file": "libavformat/rtpenc_aac.c",
+            "line": 36,
+            "function": "ff_rtp_send_aac",
+            "code_snippet": "if ((s1->streams[0]->codecpar->extradata_size) == 0) {",
+            "note": "Absent codec extradata selects the branch that assumes an in-band ADTS header; there is no minimum packet-size check."
+          },
+          {
+            "file": "libavformat/rtpenc_aac.c",
+            "line": 37,
+            "function": "ff_rtp_send_aac",
+            "code_snippet": "size -= 7; buff += 7;",
+            "note": "The proof's one-byte public packet becomes a -6-byte payload and advances its source pointer six bytes beyond the packet data."
+          },
+          {
+            "file": "libavformat/rtpenc_aac.c",
+            "line": 66,
+            "function": "ff_rtp_send_aac",
+            "code_snippet": "if (size <= max_packet_size) {",
+            "note": "The negative size necessarily satisfies the ordinary single-packet branch."
+          },
+          {
+            "file": "libavformat/rtpenc_aac.c",
+            "line": 69,
+            "function": "ff_rtp_send_aac",
+            "code_snippet": "memcpy(s->buf_ptr, buff, size);",
+            "note": "ASan reports negative-size-param with size -6 in the production packetizer and aborts deterministically."
+          },
+          {
+            "file": "libavformat/rtpenc_aac.c",
+            "line": 37,
+            "function": "ff_rtp_send_aac",
+            "code_snippet": "if (size < 7) { ... return; }",
+            "note": "Later repair c77a16487a37ae450fa8ea5a94fd6488e40277b7 inserts this exact lower-bound check before the subtraction."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/rtpenc_aac.c",
+        "start": 24,
+        "end": 87
+      }
+    ]
+  },
+  {
+    "case_id": "overlay-cuda-rounded-grid-main-frame-overflow",
+    "finding": {
+      "id": "ffmpeg-overlay-cuda-rounded-grid-main-frame-overflow",
+      "finding_type": "out_of_bounds_write",
+      "cwe": "CWE-787",
+      "file": "libavfilter/vf_overlay_cuda.cu",
+      "line_number": 50,
+      "severity": "high",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "overlay_cuda launches complete 32x16 CUDA blocks by rounding the main plane dimensions up, but the kernel receives no main width or height and clips threads only to the overlay rectangle. A valid 32x18 NV12 main frame with a 32x32 overlay at the origin therefore leaves rounded threads through luma row 31 and chroma row 15 enabled beyond the main allocation. With a normalized 32-byte pitch, the exact allocation is 864 bytes while the final luma and chroma writes reach offsets 1023 and 1087, overrunning it by 160 and 224 bytes respectively; larger aligned CUDA pitches preserve and increase the out-of-bounds relationship. No CUDA runtime was available locally, so the root is retained as source- and geometry-confirmed rather than sanitizer-observed.",
+      "code_snippet": "cuLaunchKernel(... DIV_UP(main_width, BLOCK_X), DIV_UP(main_height, BLOCK_Y), ...); ... if (x >= overlay_w + x_position || y >= overlay_h + y_position ...) return; ... main[x + y*main_linesize] = ...;",
+      "poc": "Run evaluations/run_ffmpeg_overlay_cuda_grid_proof.py against the configured pinned checkout; it validates the host/kernel/allocation source indicators and records the exact normalized luma and chroma overflow geometry.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a main-sized rounded launch grid is clipped only by a larger overlay, allowing tail-block CUDA threads to write beyond the main frame",
+        "steps": [
+          {
+            "file": "libavfilter/vf_overlay_cuda.c",
+            "line": 43,
+            "function": "overlay_cuda_call_kernel",
+            "code_snippet": "#define BLOCK_X 32 ... #define BLOCK_Y 16",
+            "note": "Every plane uses fixed 32-by-16 CUDA blocks."
+          },
+          {
+            "file": "libavfilter/vf_overlay_cuda.c",
+            "line": 216,
+            "function": "overlay_cuda_call_kernel",
+            "code_snippet": "DIV_UP(main_width, BLOCK_X), DIV_UP(main_height, BLOCK_Y), 1,",
+            "note": "A 32x18 luma plane launches threads across a 32x32 grid, while its 32x9 NV12 chroma plane launches a 32x16 grid."
+          },
+          {
+            "file": "libavfilter/vf_overlay_cuda.c",
+            "line": 205,
+            "function": "overlay_cuda_call_kernel",
+            "code_snippet": "void* kernel_args[] = { ... &main_data, &main_linesize, ... &overlay_width, &overlay_height, ... };",
+            "note": "The host omits main_width and main_height from the kernel arguments, so the kernel cannot reject rounded tail threads against the destination geometry."
+          },
+          {
+            "file": "libavfilter/vf_overlay_cuda.cu",
+            "line": 34,
+            "function": "Overlay_Cuda",
+            "code_snippet": "if (x >= overlay_w + x_position || y >= overlay_h + y_position || x < x_position || y < y_position) return;",
+            "note": "A 32x32 overlay at the origin permits every luma launch thread and all 16 chroma rows, including rows beyond the smaller main planes."
+          },
+          {
+            "file": "libavfilter/vf_overlay_cuda.cu",
+            "line": 50,
+            "function": "Overlay_Cuda",
+            "code_snippet": "main[x + y*main_linesize] = ...;",
+            "note": "Normalized exact-allocation offsets reach 1023 for luma and 1087 for chroma against an 864-byte NV12 allocation, producing 160- and 224-byte overflows."
+          },
+          {
+            "file": "libavutil/hwcontext_cuda.c",
+            "line": 178,
+            "function": "cuda_frames_init",
+            "code_snippet": "int size = av_image_get_buffer_size(ctx->sw_format, ctx->width, ctx->height, priv->tex_alignment);",
+            "note": "The CUDA frame pool derives one image allocation from the negotiated main geometry rather than the rounded launch dimensions."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/vf_overlay_cuda.c",
+        "start": 190,
+        "end": 219
+      },
+      {
+        "path": "libavfilter/vf_overlay_cuda.c",
+        "start": 284,
+        "end": 323
+      },
+      {
+        "path": "libavfilter/vf_overlay_cuda.cu",
+        "start": 20,
+        "end": 52
+      },
+      {
+        "path": "libavutil/hwcontext_cuda.c",
+        "start": 116,
+        "end": 185
+      }
+    ]
   }
 ]
