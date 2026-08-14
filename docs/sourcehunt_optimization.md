@@ -1901,3 +1901,63 @@ reproduces ranks 829–852 and their committed manifest exactly. The next
 unchanged exact-path manifest seals ranks 853–876 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_0853_0876.json` with SHA-256
 `19ad49230ad2664e5f09adf862eb7d5597c2d2c5e48a57801abd49483e31bc9a`.
+
+### Blind wave 853–876 and readvitc zero-width pit group
+
+The unchanged treatment completed all 24 exact-path trajectories with a
+successful source-bearing action. It used 8,350,832 tokens over 862 model
+calls, made 199 candidate/finding calls, performed 23 automatic context
+compactions, and submitted no formal findings. There were no endpoint or
+native-tool failures.
+
+Offline review found one novel root in `vf_readvitc.c`, through a narrower
+mechanism than its terminal ledger proposed. For negotiated widths one through
+nine, `config_props` computes `grp_width = width * 5 / 48` as zero. On a 1x1
+row the mutually ordered black and white threshold scans necessarily advance
+`x` to `width`; the zero-width half-pit calculation does not step back. The
+remaining-group check uses strict greater-than, so it accepts
+`grp_start_pos + grp_width == width`, and `get_pit_avg3` reads `line[width]`
+and `line[width + 1]`.
+
+A public `buffer -> readvitc -> buffersink` graph with a valid refcounted 1x1
+gray frame backed by an exact one-byte plane makes ASan report a one-byte
+heap-buffer-overflow read immediately after that allocation. Ordinary FFmpeg
+frames include row padding, which masks the allocation boundary without
+making the out-of-range active-row access valid. Durable artifacts are
+`evaluations/ffmpeg_readvitc_small_width_reproducer.c` and
+`evaluations/run_ffmpeg_readvitc_small_width_reproducer.py`.
+
+The other terminal leads resolve to concrete bounds. VP9 transform sizes are
+encoded from zero through three, so its 96-byte edge scratch is exact even at
+16-bit depth. The APV syntax layer derives minimum tile dimensions that cap
+both tile-start arrays at 20 entries, QOI RGB input leaves alpha fixed at 255
+and cannot emit an RGBA opcode, SMPTE 436M decodes its byte-sized ANC count
+into an identically sized 255-byte payload, and HEVC SAO stores exactly the
+five offsets indexed by its DSP. MM Video uses the checked bytestream getters,
+TTA's signed 30-bit index size is either bounded or rejected by packet growth,
+and TrueHD's rewritten header region remains algebraically inside `out_size`.
+
+RoQ's eight-frame allocation and counter agree, CFHD alpha allocation and
+processing use the same frame dimensions, VMAF Motion receives the actual
+source linesize, and the texture DSP arguments are fixed wrapper constants.
+VC-1 overlap helpers are called only with codec-owned padded blocks; AudioToolbox
+inherits its supported codec and converter channel contract; and libdavs2
+allocates from the external picture's own dimensions. The HDR10+ serializer's
+fixed arrays are safe for structures produced by the validated T.35 parser;
+out-of-range caller-constructed public structures are outside this media-input
+root set. Likewise, expression NaN/Inf-to-integer conversion is configuration
+UB without a demonstrated out-of-range access. The probetest utility, GIF
+muxer, DNxHD decoder, speech normalizer, and remaining reviewed paths exposed
+no violated allocation, progress, or lifetime invariant.
+
+Only after adjudication closed was the wave compared with the sealed survivor
+set. No prior survivor falls in ranks 853–876, so readvitc is a novel root.
+Current totals are 42 confirmed root causes and 36 dynamically reproduced
+issues. Coverage is 876/4,995 (17.54%), with 4,119 historically ranked files
+remaining.
+
+Directly slicing this machine's unchanged 4,993-file deterministic order
+reproduces ranks 853–876 and their committed manifest and SHA-256 exactly. The
+next unchanged exact-path manifest seals ranks 877–900 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_0877_0900.json` with SHA-256
+`820bf185f4049c468b6fa0a8b43d015a0f90eb10afec1ee63ad427fa7d4427b0`.
