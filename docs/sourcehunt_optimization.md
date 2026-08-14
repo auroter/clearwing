@@ -2027,3 +2027,61 @@ reproduces ranks 877–900 and their committed manifest and SHA-256 exactly. The
 next unchanged exact-path manifest seals ranks 901–924 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_0901_0924.json` with SHA-256
 `9d283f5847e43c2534c816a607bbf19065d43d1027c3e6d13025d76af41dfa0b`.
+
+### Blind wave 901–924 and three public-path roots
+
+The unchanged treatment completed all 24 exact-path trajectories with a
+successful source-bearing action. It used 8,961,555 tokens over 905 model
+calls, made 166 candidate/finding calls, performed 26 automatic context
+compactions, and submitted no formal findings. There were no endpoint,
+reporting, or native-tool failures.
+
+Offline review found three novel roots. `libmodplug.c` documents `max_size=0`
+as disabling the input-size limit, and its known-size branch consequently
+leaves a positive file size unclamped. Allocation still uses `av_malloc(0)`,
+however, before `avio_read` copies the positive known size into that minimum
+backing allocation. A public custom AVIO input reporting 4,096 bytes makes ASan
+report a 4,096-byte heap-buffer-overflow write immediately after the
+allocator's one-byte region.
+
+`vf_kerndeint.c` accepts a 1x1 YUV420P frame despite assuming a second source
+row. With default `order=0`, the filter advances the luma source pointer to
+nonexistent row one before its first unconditional field-copy `memcpy`. A
+public `buffer -> kerndeint -> buffersink` graph with exact one-byte planes
+makes ASan report a one-byte heap-buffer-overflow read immediately after the
+luma allocation.
+
+`scd.c` accepts the file-supplied PCM channel count zero because it rejects only
+values above eight. This derives `block_align=0`; the zero-byte `av_get_packet`
+succeeds, and timestamp calculation then divides by the zero channel count. A
+complete public custom-AVIO SCD input reaches the expression through
+`av_read_frame`, where UBSan reports division by zero and aborts.
+
+The durable artifacts are
+`evaluations/ffmpeg_libmodplug_zero_limit_reproducer.c`,
+`evaluations/run_ffmpeg_libmodplug_zero_limit_reproducer.py`,
+`evaluations/ffmpeg_kerndeint_small_height_reproducer.c`,
+`evaluations/run_ffmpeg_kerndeint_small_height_reproducer.py`,
+`evaluations/ffmpeg_scd_zero_channels_reproducer.c`, and
+`evaluations/run_ffmpeg_scd_zero_channels_reproducer.py`.
+
+The proposed VP9 superframe unsigned-sum wrap is false. `init_get_bits8`
+rejects every constituent packet above `INT_MAX / 8`, and at most seven packets
+can be merged, so their total cannot wrap a 32-bit unsigned accumulator. SBC,
+MSRLE, XWD, VAAPI H.264/H.265, BMV, Midivid, fade, DeckLink, MIPS DSP,
+mcompand, nlmeans Vulkan, SIFF, EXR, Sierpinski, dblur, and 8SVX likewise close
+under their concrete allocation, format, stride, padding, or public-API
+contracts.
+
+Only after adjudication and all three public-path reproductions completed was
+the wave compared with the sealed survivor set. None of the three files had a
+prior survivor, so all three roots are novel rather than rediscoveries. Current
+totals are 49 confirmed root causes and 43 dynamically reproduced issues.
+Coverage is 924/4,995 (18.50%), with 4,071 historically ranked files
+remaining.
+
+Directly slicing this machine's unchanged deterministic order reproduces ranks
+901–924 and their committed manifest and SHA-256 exactly. The next unchanged
+exact-path manifest seals ranks 925–948 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_0925_0948.json` with SHA-256
+`884569b529ad1cf5840d18c9123ad6ba51f5e8c962b13bde3c4039f9f0bbd163`.

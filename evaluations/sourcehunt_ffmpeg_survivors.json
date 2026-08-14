@@ -1503,5 +1503,98 @@
     "windows": [
       {"path": "libavfilter/af_chorus.c", "start": 75, "end": 180}
     ]
+  },
+  {
+    "case_id": "libmodplug-zero-unlimited-size-heap-overflow",
+    "finding": {
+      "id": "ffmpeg-libmodplug-zero-unlimited-size-heap-overflow",
+      "finding_type": "out_of_bounds_write",
+      "cwe": "CWE-787",
+      "file": "libavformat/libmodplug.c",
+      "line_number": 203,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The libmodplug demuxer publicly documents max_size=0 as no limit, but a known-size input takes inconsistent allocation and read paths. The nonzero file size bypasses clamping because the clamp is conditional on max_size, while input storage is still allocated with av_malloc(max_size). A public custom AVIO context reporting a 4096-byte size therefore leaves the positive read length unchanged, allocates av_malloc(0)'s one-byte minimum backing, and asks avio_read to copy all 4096 bytes into it. ASan reports a 4096-byte heap-buffer-overflow write immediately after that one-byte region through avformat_open_input.",
+      "code_snippet": "else if (modplug->max_size && sz > modplug->max_size) sz = modplug->max_size; ... modplug->buf = av_malloc(modplug->max_size); ... sz = avio_read(pb, modplug->buf, sz);",
+      "poc": "Configure FFmpeg with libmodplug and the libmodplug demuxer under ASan, then run evaluations/run_ffmpeg_libmodplug_zero_limit_reproducer.py against the configured static libraries.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "the documented zero no-limit option disables known-size clamping but remains the allocation size, so the demuxer copies a positive complete input into av_malloc(0)'s one-byte backing",
+        "steps": [
+          {"file": "libavformat/libmodplug.c", "line": 94, "function": "options", "code_snippet": "Set to 0 for no limit (not recommended)", "note": "The public demuxer option explicitly admits zero and documents it as the unlimited mode."},
+          {"file": "libavformat/libmodplug.c", "line": 180, "function": "modplug_read_header", "code_snippet": "int64_t sz = avio_size(pb);", "note": "A seekable or size-reporting attacker input supplies its positive complete file size."},
+          {"file": "libavformat/libmodplug.c", "line": 186, "function": "modplug_read_header", "code_snippet": "else if (modplug->max_size && sz > modplug->max_size)", "note": "max_size zero makes the only known-size clamp false, leaving sz positive."},
+          {"file": "libavformat/libmodplug.c", "line": 200, "function": "modplug_read_header", "code_snippet": "modplug->buf = av_malloc(modplug->max_size);", "note": "Allocation still uses max_size zero; the pinned allocator returns a one-byte minimum backing allocation."},
+          {"file": "libavformat/libmodplug.c", "line": 203, "function": "modplug_read_header", "code_snippet": "sz = avio_read(pb, modplug->buf, sz);", "note": "The positive known file size reaches avio_read unchanged; ASan observes a 4096-byte write beyond the one-byte allocation."}
+        ]
+      }
+    },
+    "windows": [
+      {"path": "libavformat/libmodplug.c", "start": 81, "end": 101},
+      {"path": "libavformat/libmodplug.c", "start": 174, "end": 233}
+    ]
+  },
+  {
+    "case_id": "kerndeint-small-height-first-field-oob-read",
+    "finding": {
+      "id": "ffmpeg-kerndeint-small-height-first-field-oob-read",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavfilter/vf_kerndeint.c",
+      "line_number": 160,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The kerndeint filter accepts a 1x1 YUV420P frame without enforcing the vertical neighborhood its field-copy and interpolation logic assumes. With the public default order=0, filter_frame initializes srcp to data plus one linesize, already one row beyond a one-row plane, but its y=0 iteration still unconditionally copies bwidth bytes from that address. A public buffer-to-kerndeint-to-buffersink graph with three separately refcounted exact one-byte planes makes ASan report a one-byte heap-buffer-overflow read immediately after the luma allocation at the first memcpy.",
+      "code_snippet": "srcp = srcp_saved + (1 - order) * src_linesize; ... for (y = 0; y < h; y += 2) memcpy(dstp, srcp, bwidth);",
+      "poc": "Configure FFmpeg with GPL and the kerndeint filter under ASan, then run evaluations/run_ffmpeg_kerndeint_small_height_reproducer.py against the configured static libraries.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a one-row public filter input passes configuration, default field order advances the source pointer to nonexistent row one, and the first unconditional field copy reads beyond a tightly backed plane",
+        "steps": [
+          {"file": "libavfilter/vf_kerndeint.c", "line": 70, "function": "pix_fmts", "code_snippet": "AV_PIX_FMT_YUV420P", "note": "The public filter accepts the reproducer's ordinary planar input format."},
+          {"file": "libavfilter/vf_kerndeint.c", "line": 89, "function": "config_props", "code_snippet": "av_image_alloc(... inlink->w, inlink->h, inlink->format, 16)", "note": "Configuration accepts width and height one and imposes no minimum or even-height requirement."},
+          {"file": "libavfilter/vf_kerndeint.c", "line": 156, "function": "filter_frame", "code_snippet": "srcp = srcp_saved + (1 - order) * src_linesize;", "note": "The default order zero advances the luma source from its only row to row one."},
+          {"file": "libavfilter/vf_kerndeint.c", "line": 159, "function": "filter_frame", "code_snippet": "for (y = 0; y < h; y += 2)", "note": "Height one still enters the field-copy loop once."},
+          {"file": "libavfilter/vf_kerndeint.c", "line": 160, "function": "filter_frame", "code_snippet": "memcpy(dstp, srcp, bwidth);", "note": "The first copy reads one byte immediately after the exact one-byte luma plane; ASan aborts here."}
+        ]
+      }
+    },
+    "windows": [
+      {"path": "libavfilter/vf_kerndeint.c", "start": 70, "end": 99},
+      {"path": "libavfilter/vf_kerndeint.c", "start": 139, "end": 170}
+    ]
+  },
+  {
+    "case_id": "scd-zero-channel-pcm-division-by-zero",
+    "finding": {
+      "id": "ffmpeg-scd-zero-channel-pcm-division-by-zero",
+      "finding_type": "denial_of_service",
+      "cwe": "CWE-369",
+      "file": "libavformat/scd.c",
+      "line_number": 332,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The experimental SCD demuxer reads a track's channel count from the file and rejects values above eight but permits zero. For a PCM track this derives block_align zero. Packet reading asks av_get_packet for zero bytes, which returns zero without error, and then computes the packet timestamp by dividing bytes_read by channels times two. A complete 85-byte public custom-AVIO SCD input with one positive-length, zero-channel PCM track reaches that expression through av_read_frame; UBSan reports division by zero at scd.c:332 and aborts.",
+      "code_snippet": "if (track->num_channels > 8) return AVERROR_INVALIDDATA; ... par->block_align = ... * par->ch_layout.nb_channels / 8; ... pkt->pts = trk->bytes_read / (par->ch_layout.nb_channels * sizeof(uint16_t));",
+      "poc": "Configure FFmpeg with the SCD demuxer under ASan and UBSan, then run evaluations/run_ffmpeg_scd_zero_channels_reproducer.py against the configured static libraries.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a file-supplied zero PCM channel count passes the demuxer's one-sided validation, produces a zero-byte packet request, and reaches timestamp division with a zero denominator",
+        "steps": [
+          {"file": "libavformat/scd.c", "line": 175, "function": "scd_read_track", "code_snippet": "track->length = AV_RB32(buf + 0); track->num_channels = AV_RB32(buf + 4);", "note": "The reproducer supplies positive track length one and channel count zero in the track header."},
+          {"file": "libavformat/scd.c", "line": 185, "function": "scd_read_track", "code_snippet": "if (track->num_channels > 8 || track->sample_rate >= 192000 || ...)", "note": "The one-sided channel validation accepts zero."},
+          {"file": "libavformat/scd.c", "line": 225, "function": "scd_read_track", "code_snippet": "par->block_align = par->bits_per_coded_sample * par->ch_layout.nb_channels / 8;", "note": "PCM setup derives block_align zero from the accepted channel count."},
+          {"file": "libavformat/scd.c", "line": 315, "function": "scd_read_packet", "code_snippet": "size = par->block_align;", "note": "The packet path requests zero bytes; av_get_packet returns zero, not an error."},
+          {"file": "libavformat/scd.c", "line": 332, "function": "scd_read_packet", "code_snippet": "pkt->pts = trk->bytes_read / (par->ch_layout.nb_channels * sizeof(uint16_t));", "note": "The denominator is zero; UBSan reports division by zero and aborts through public av_read_frame."}
+        ]
+      }
+    },
+    "windows": [
+      {"path": "libavformat/scd.c", "start": 150, "end": 238},
+      {"path": "libavformat/scd.c", "start": 291, "end": 344}
+    ]
   }
 ]
