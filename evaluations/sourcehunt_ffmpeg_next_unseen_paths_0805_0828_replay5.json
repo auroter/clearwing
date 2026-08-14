@@ -1,0 +1,6 @@
+[
+  "libavcodec/eatgq.c",
+  "libavcodec/vcr1.c",
+  "libavfilter/f_select.c",
+  "libavformat/argo_asf.c"
+]

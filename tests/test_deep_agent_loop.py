@@ -154,6 +154,9 @@ async def test_initial_source_action_gets_one_bounded_retry():
 
     assert message_snapshots[1][-1][0] == "user"
     assert "Do not write or simulate" in message_snapshots[1][-1][1]
+    assert llm.achat.call_args_list[0].kwargs["require_tool"] is True
+    assert llm.achat.call_args_list[1].kwargs["require_tool"] is True
+    assert "require_tool" not in llm.achat.call_args_list[2].kwargs
     assert source_calls == 1
     assert result.stop_reason == "completed"
 
@@ -169,6 +172,7 @@ async def test_initial_source_action_retry_exhaustion_is_not_completed_coverage(
         result = await hunter.arun()
 
     assert llm.achat.call_count == 2
+    assert all(call.kwargs["require_tool"] is True for call in llm.achat.call_args_list)
     assert result.stop_reason == "no_source_action"
 
 
@@ -200,7 +204,90 @@ async def test_failed_source_tool_does_not_satisfy_initial_source_action():
         result = await hunter.arun()
 
     assert llm.achat.call_count == 3
+    assert all(call.kwargs["require_tool"] is True for call in llm.achat.call_args_list)
     assert result.stop_reason == "no_source_action"
+
+
+@pytest.mark.asyncio
+async def test_string_error_source_tool_does_not_satisfy_initial_source_action():
+    llm = AsyncMock()
+    tool = NativeToolSpec(
+        name="read_source_file",
+        description="read",
+        schema={"type": "object", "properties": {}},
+        handler=lambda **_kwargs: "ERROR: file not found",
+    )
+    llm.achat.side_effect = [
+        FakeResponse(tool_calls_list=[_make_tool_call("read_source_file")]),
+        FakeResponse(text="I will retry with the tool."),
+        FakeResponse(text="Still trying."),
+    ]
+    hunter = NativeHunter(
+        llm=llm,
+        prompt="test",
+        tools=[tool],
+        ctx=HunterContext(repo_path="/tmp/repo"),
+        max_steps=4,
+        initial_source_action_retries=1,
+    )
+
+    with patch("clearwing.sourcehunt.hunter.HunterTrajectoryLogger") as mock_traj:
+        mock_traj.for_hunter.return_value = MagicMock()
+        result = await hunter.arun()
+
+    assert llm.achat.call_count == 3
+    assert all(call.kwargs["require_tool"] is True for call in llm.achat.call_args_list)
+    assert result.stop_reason == "no_source_action"
+
+
+@pytest.mark.asyncio
+async def test_window_scaffold_requires_rank_then_ranked_read_by_name():
+    llm = AsyncMock()
+    ctx = HunterContext(repo_path="/tmp/repo")
+
+    def rank_source_windows(**_kwargs):
+        ctx.source_windows_ranked = True
+        ctx.source_window_plan["W1"] = {"path": "target.c"}
+        return {"windows": [{"window_id": "W1"}]}
+
+    tools = [
+        NativeToolSpec(
+            name="rank_source_windows",
+            description="rank",
+            schema={"type": "object", "properties": {}},
+            handler=rank_source_windows,
+        ),
+        NativeToolSpec(
+            name="read_ranked_window",
+            description="read",
+            schema={"type": "object", "properties": {}},
+            handler=lambda **_kwargs: "source",
+        ),
+    ]
+    llm.achat.side_effect = [
+        FakeResponse(tool_calls_list=[_make_tool_call("rank_source_windows")]),
+        FakeResponse(tool_calls_list=[_make_tool_call("read_ranked_window")]),
+        FakeResponse(text="done"),
+    ]
+    hunter = NativeHunter(
+        llm=llm,
+        prompt="test",
+        tools=tools,
+        ctx=ctx,
+        max_steps=4,
+        require_source_windows=True,
+        initial_source_action_retries=1,
+    )
+
+    with patch("clearwing.sourcehunt.hunter.HunterTrajectoryLogger") as mock_traj:
+        mock_traj.for_hunter.return_value = MagicMock()
+        result = await hunter.arun()
+
+    calls = llm.achat.call_args_list
+    assert calls[0].kwargs["required_tool"] == "rank_source_windows"
+    assert calls[1].kwargs["required_tool"] == "read_ranked_window"
+    assert "required_tool" not in calls[2].kwargs
+    assert result.stop_reason == "completed"
 
 
 @pytest.mark.asyncio

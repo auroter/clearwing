@@ -5,6 +5,7 @@ Layer 2 (retry-on-400 fallback in achat / achat_stream).
 """
 
 import asyncio
+import json
 from unittest.mock import patch
 
 import pytest
@@ -14,6 +15,7 @@ from clearwing.llm.native import (
     _REASONING_EFFORT_OVERRIDE_ALLOW,
     _REASONING_EFFORT_UNSUPPORTED_PATTERNS,
     AsyncLLMClient,
+    NativeToolSpec,
 )
 
 
@@ -141,6 +143,86 @@ class TestConstructorAutoBehavior:
     def test_explicit_high_passes_through(self):
         client = AsyncLLMClient(**self._kwargs(model_name="o1-preview", reasoning_effort="high"))
         assert client.reasoning_effort == "high"
+
+
+class TestRequiredToolChoice:
+    def test_achat_merges_required_tool_choice_with_reasoning_passthrough(self):
+        client = AsyncLLMClient(
+            model_name="DeepSeek-v4-Flash-0731",
+            provider_name="openai_compat",
+            api_key="test",
+        )
+        tool = NativeToolSpec(
+            name="read_source_file",
+            description="Read source",
+            schema={"type": "object", "properties": {}},
+            handler=lambda: "source",
+        )
+        response = ChatResponse(content=[{"text": "ok"}])
+        observed_extra_body = None
+
+        async def fake_policy(self_, client_obj, request, options):
+            nonlocal observed_extra_body
+            observed_extra_body = json.loads(options.extra_body_json)
+            return response
+
+        with (
+            patch.object(AsyncLLMClient, "_achat_with_provider_policy", new=fake_policy),
+            patch.object(AsyncLLMClient, "_build_client", new=lambda self, cls: object()),
+        ):
+            result = asyncio.run(
+                client.achat(messages=[], tools=[tool], require_tool=True)
+            )
+
+        assert result is response
+        assert observed_extra_body == {
+            "chat_template_kwargs": {"reasoning_effort": "none"},
+            "tool_choice": "required",
+        }
+
+    def test_reasoning_fallback_preserves_required_tool_choice(self):
+        from genai_pyo3 import ChatOptions
+
+        original = ChatOptions(
+            reasoning_effort="none",
+            extra_body={
+                "chat_template_kwargs": {"reasoning_effort": "none"},
+                "tool_choice": "required",
+            },
+        )
+
+        rebuilt = AsyncLLMClient._rebuild_options_without_reasoning(original)
+
+        assert rebuilt.reasoning_effort is None
+        assert json.loads(rebuilt.extra_body_json) == {"tool_choice": "required"}
+
+    def test_named_required_tool_uses_openai_function_choice(self):
+        client = AsyncLLMClient(
+            model_name="DeepSeek-v4-Flash-0731",
+            provider_name="openai_compat",
+            api_key="test",
+        )
+
+        assert client._request_extra_body(required_tool="rank_source_windows") == {
+            "chat_template_kwargs": {"reasoning_effort": "none"},
+            "tool_choice": {
+                "type": "function",
+                "function": {"name": "rank_source_windows"},
+            },
+        }
+
+    def test_generic_and_named_required_tool_are_mutually_exclusive(self):
+        client = AsyncLLMClient(
+            model_name="gpt-4o",
+            provider_name="openai_compat",
+            api_key="test",
+        )
+
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            client._request_extra_body(
+                require_tool=True,
+                required_tool="rank_source_windows",
+            )
 
 
 class TestIsUnsupportedReasoningEffortError:

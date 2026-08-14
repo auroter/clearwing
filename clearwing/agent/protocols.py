@@ -31,6 +31,8 @@ class LLMInvokable(Protocol):
         messages: list[ChatMessage],
         system: str | None = ...,
         tools: list[NativeToolSpec] | None = ...,
+        require_tool: bool = ...,
+        required_tool: str | None = ...,
     ) -> ChatResponse: ...
 
     async def achat_stream(

@@ -1,0 +1,12 @@
+[
+  "libavcodec/cngdec.c",
+  "libavcodec/codec_par.c",
+  "libavcodec/eatgq.c",
+  "libavcodec/ffv1_vulkan.c",
+  "libavcodec/vcr1.c",
+  "libavfilter/f_select.c",
+  "libavfilter/vf_estdif.c",
+  "libavfilter/vf_grayworld.c",
+  "libavformat/argo_asf.c",
+  "libavformat/movenccenc.c"
+]

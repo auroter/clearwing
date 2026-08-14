@@ -1773,3 +1773,71 @@ denominator difference does not alter either sealed wave.
 The next unchanged exact-path manifest seals ranks 805–828 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_0805_0828.json` with SHA-256
 `5eb4481610d4a6b57bf30b3a5fa76f215fc654e5e5f77e76a5ed49d2803004c5`.
+
+### Blind wave 805–828, native source-action recovery, and HEVC rediscovery
+
+The first sealed pass hunted all 24 exact paths but is invalid as a negative
+result because only 14 trajectories completed a source-bearing action. The
+replacement endpoint emitted textual imitations of tool calls for the other
+ten. That pass used 4,233,005 tokens over 457 model calls, made 93
+candidate/finding calls, and submitted no formal findings. A first pinned
+replay recovered `vf_estdif.c`, using 392,627 tokens and six candidate calls,
+but the remaining nine paths still emitted text. A bounded prompt-only retry
+then stopped those nine honestly as `no_source_action`, using 84,202 tokens and
+making no candidate calls; it did not improve native-tool coverage.
+
+The client now carries OpenAI-compatible required tool selection through
+`extra_body` while preserving the DeepSeek thinking-off passthrough. For the
+window scaffold, the hunter structurally requires `rank_source_windows` and
+then `read_ranked_window` by name until one source read succeeds. Failed source
+tools returned as either structured errors or `ERROR:` strings do not satisfy
+coverage. A live generic and named-tool probe confirmed that the replacement
+endpoint honors both request shapes. The proof-refinement profile retains one
+bounded text-only retry as a fail-closed fallback.
+
+The first structural replay recovered five more paths. It used 1,991,453
+tokens and made 48 candidate calls; three concurrent hunters failed on
+endpoint HTTP 500 responses and `vcr1.c` selected an invalid initial path. A
+final four-path replay used named tool selection at concurrency one and
+recovered all four remaining paths, using 1,277,622 tokens and 30 candidate
+calls. The accepted primary and recovery artifacts therefore close source
+coverage at 24/24 with 7,894,707 tokens over 872 model calls, 177
+candidate/finding calls, 24 context compactions, and no formal findings.
+
+Offline review promoted no new root cause. The strongest terminal ledger did
+independently reconstruct the already-confirmed D3D12VA upload overflow in the
+HEVC backend: the resource is sized from decoded-image geometry while every
+accepted slice byte plus an inserted start code is copied without a capacity
+check. The other terminal candidates resolved to concrete contracts. FITS can
+store `NAXIS1` through `NAXIS999`, but its eight-byte keyword field cannot
+represent `NAXIS1000` and the exact sequence check rejects the truncated key
+before indexing past `naxisn[998]`. MLV's packet API allocates the requested
+read size and handles short input, XBM's worst-case row and header bytes fit
+its formula, and MicroDVD's style parser only accumulates a bounded bitmask.
+H.264 prediction modes remain below the lookup-table bounds, FFV1 slice-count
+products are explicitly capped, and codec-parameter extradata addition is
+guarded below `INT32_MAX`.
+
+The reviewed filter leads likewise stayed inside their allocations: ANLMDN's
+`K`, `S`, `H`, and `N` relations cover every SSD neighbor; SITI performs no
+gradient writes for sub-three-pixel dimensions; reverse grows each array
+before indexing; ESTDIF clamps interpolation coordinates; and W3FDIF,
+grayworld, select, colorspace, and swscale inherit negotiated plane geometry
+and stride contracts. CNG's reflection coefficients can destabilize numeric
+output but not the fixed synthesis buffers. The VCR1 side-data, FFV1 Vulkan,
+movenc CENC, Argo ASF, and EATGQ candidates similarly lacked a producer that
+violated the relevant allocation, packet-padding, or framework invariant.
+
+Only after that adjudication was complete was the wave scored against its one
+sealed survivor. The HEVC trajectory is a terminal-ledger hit on the existing
+D3D12VA H.264/HEVC root, so effective recall is 1/1 from terminal ledgers and
+0/1 from formal findings. Because this is the other duplicated backend for a
+root already counted after ranks 781–804, totals remain 40 confirmed root
+causes and 34 dynamically reproduced issues. Coverage is 828/4,995 (16.58%),
+with 4,167 historically ranked files remaining. This machine enumerates 4,993
+files, but directly slicing its deterministic order reproduces ranks 805–828
+exactly.
+
+The next unchanged exact-path manifest seals ranks 829–852 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_0829_0852.json` with SHA-256
+`03fd69edb49c46053faf005d622eedd34036c29fef1d7f79f89f08d130869c82`.

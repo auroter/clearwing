@@ -1651,6 +1651,13 @@ class NativeHunter:
                     generation_options["temperature"] = self.temperature
                 if self.max_output_tokens is not None:
                     generation_options["max_tokens"] = self.max_output_tokens
+                if source_actions_completed == 0 and self.initial_source_action_retries > 0:
+                    if self.require_source_windows and not self.ctx.source_windows_ranked:
+                        generation_options["required_tool"] = "rank_source_windows"
+                    elif self.require_source_windows and self.ctx.source_window_plan:
+                        generation_options["required_tool"] = "read_ranked_window"
+                    else:
+                        generation_options["require_tool"] = True
                 response = await self.llm.achat(
                     messages=messages,
                     system=request_system,
@@ -2170,9 +2177,14 @@ class NativeHunter:
                         if source_action:
                             source_actions_since_candidate_update += 1
                         tool_output = await self._run_tool(tools_by_name, tool_call)
-                        if source_action and not (
-                            isinstance(tool_output, dict) and tool_output.get("error")
-                        ):
+                        source_action_failed = bool(
+                            (isinstance(tool_output, dict) and tool_output.get("error"))
+                            or (
+                                isinstance(tool_output, str)
+                                and tool_output.lstrip().upper().startswith("ERROR:")
+                            )
+                        )
+                        if source_action and not source_action_failed:
                             source_actions_completed += 1
                         tool_summary = self._tool_output_text(
                             tool_call.fn_name,

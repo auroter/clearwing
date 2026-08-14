@@ -489,6 +489,7 @@ SCAFFOLD_PROFILES: dict[str, ScaffoldProfile] = {
         value_domains_before_candidate=1,
         require_validated_candidate_before_finding=True,
         enable_domain_proof_refinement=True,
+        initial_source_action_retries=1,
     ),
 }
 

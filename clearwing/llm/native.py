@@ -318,6 +318,33 @@ class AsyncLLMClient:
             return None
         return {"chat_template_kwargs": {"reasoning_effort": "none"}}
 
+    def _request_extra_body(
+        self,
+        *,
+        require_tool: bool = False,
+        required_tool: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Return provider request fields not represented by ``ChatOptions``.
+
+        ``genai-pyo3`` does not currently expose OpenAI's ``tool_choice`` as a
+        first-class option. Its ``extra_body`` payload is merged into the
+        outgoing request, so use that escape hatch when a caller needs a
+        native tool call rather than a textual imitation. Keep this merge in
+        one place so the DeepSeek thinking-off passthrough remains intact.
+        """
+
+        extra_body = dict(self._reasoning_extra_body() or {})
+        if require_tool and required_tool is not None:
+            raise ValueError("require_tool and required_tool are mutually exclusive")
+        if required_tool is not None:
+            extra_body["tool_choice"] = {
+                "type": "function",
+                "function": {"name": required_tool},
+            }
+        elif require_tool:
+            extra_body["tool_choice"] = "required"
+        return extra_body or None
+
     def __init__(
         self,
         *,
@@ -615,6 +642,8 @@ class AsyncLLMClient:
         response_schema: type[BaseModel] | None = None,
         response_schema_name: str | None = None,
         response_schema_description: str | None = None,
+        require_tool: bool = False,
+        required_tool: str | None = None,
     ) -> ChatResponse:
         request_tools = None
         if tools:
@@ -662,7 +691,10 @@ class AsyncLLMClient:
                 capture_reasoning_content=self.capture_reasoning_content,
                 normalize_reasoning_content=self.capture_reasoning_content,
                 reasoning_effort=self.reasoning_effort,
-                extra_body=self._reasoning_extra_body(),
+                extra_body=self._request_extra_body(
+                    require_tool=require_tool,
+                    required_tool=required_tool,
+                ),
                 response_json_spec=(
                     _json_spec_from_model(
                         response_schema,
@@ -1588,11 +1620,22 @@ class AsyncLLMClient:
         """Return a copy of *options* with ``reasoning_effort=None``.
 
         ``ChatOptions`` is a frozen Rust struct from genai-pyo3, so we
-        reconstruct it from scratch. ``response_json_spec`` is preserved. The
-        chat_template_kwargs reasoning passthrough (``extra_body``) is
-        deliberately dropped here: this rebuild runs when the provider rejected
-        ``reasoning_effort`` outright, so we stop echoing it everywhere.
+        reconstruct it from scratch. ``response_json_spec`` and unrelated
+        ``extra_body`` fields (for example ``tool_choice``) are preserved. The
+        chat-template reasoning passthrough is removed because this rebuild
+        runs when the provider rejected ``reasoning_effort`` outright.
         """
+        extra_body = (
+            json.loads(options.extra_body_json) if options.extra_body_json else None
+        )
+        if isinstance(extra_body, dict):
+            chat_template_kwargs = extra_body.get("chat_template_kwargs")
+            if isinstance(chat_template_kwargs, dict):
+                chat_template_kwargs.pop("reasoning_effort", None)
+                if not chat_template_kwargs:
+                    extra_body.pop("chat_template_kwargs", None)
+            if not extra_body:
+                extra_body = None
         return ChatOptions(
             temperature=options.temperature,
             max_tokens=options.max_tokens,
@@ -1602,6 +1645,7 @@ class AsyncLLMClient:
             capture_reasoning_content=options.capture_reasoning_content,
             normalize_reasoning_content=options.normalize_reasoning_content,
             reasoning_effort=None,
+            extra_body=extra_body,
             response_json_spec=options.response_json_spec,
         )
 

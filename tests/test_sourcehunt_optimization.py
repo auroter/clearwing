@@ -518,6 +518,21 @@ def test_state_interaction_packet_retries_other_windows_before_generic_fallback(
     assert ctx.state_domain_unavailable is True
 
 
+def test_proof_refinement_retries_one_text_only_initial_response() -> None:
+    hunter, _ = build_hunter_agent(
+        file_target=_target(),
+        repo_path=str(Path("tests/fixtures/vuln_samples/c_propagation")),
+        sandbox=None,
+        llm=MagicMock(),
+        session_id="proof-refinement-source-retry",
+        prompt_bundle="generic-security-v1",
+        scaffold_profile="proof-refinement-ledger-v1",
+    )
+
+    assert hunter.initial_source_action_retries == 1
+    assert "No source tool ran" not in hunter.prompt
+
+
 def test_incomplete_state_domain_does_not_lock_the_proof_scaffold(tmp_path) -> None:
     source = tmp_path / "src" / "target.c"
     source.parent.mkdir()
