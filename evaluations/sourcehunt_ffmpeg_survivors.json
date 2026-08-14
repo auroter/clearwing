@@ -1321,5 +1321,36 @@
       {"path": "libavfilter/vf_mestimate.c", "start": 45, "end": 105},
       {"path": "libavutil/common.h", "start": 425, "end": 445}
     ]
+  },
+  {
+    "case_id": "libxevd-unchecked-nal-size-oob-read",
+    "finding": {
+      "id": "ffmpeg-libxevd-unchecked-nal-size-oob-read",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavcodec/libxevd.c",
+      "line_number": 370,
+      "severity": "high",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "FFmpeg's libxevd wrapper accepts the four-byte packet NAL length reported by xevd_info without comparing it with the remaining AVPacket bytes. It advances past the prefix, points XEVD_BITB.addr at the current four-byte payload, and declares the unchecked 256-byte length in XEVD_BITB.ssize. XEVD initializes its bit reader from that false size and follows the packet-controlled SEI payload size beyond FFmpeg's complete eight-byte packet plus 64-byte padding allocation. A public avcodec_send_packet call with bytes 00 00 01 00 3a 00 05 64 makes ASan report a heap-buffer-overflow read in xevd_bsr_flush through xevd_eco_sei, xevd_dec_nalu, and libxevd_receive_frame.",
+      "code_snippet": "bitb.addr = pkt_au->data + bs_read_pos; bitb.ssize = nalu_size; xevd_decode(xectx->id, &bitb, &stat);",
+      "poc": "Build XEVD commit 0f066b3ea33834fe4e25b41c32c66f912f0b5d30 and FFmpeg commit 795bccdaf57772b1803914dee2f32d52776518e2 with ASan, then run evaluations/run_ffmpeg_xevd_length_reproducer.py against those libraries.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "an attacker-declared four-byte NAL length is forwarded across FFmpeg's XEVD boundary without a remaining-packet check, so the external decoder reads beyond the packet and its mandatory padding",
+        "steps": [
+          {"file": "libavcodec/libxevd.c", "line": 95, "function": "read_nal_unit_length", "code_snippet": "ret = xevd_info((void *)bs, XEVD_NAL_UNIT_LENGTH_BYTE, 1, &info);", "note": "The public wrapper parses the attacker's four-byte NAL length prefix."},
+          {"file": "libavcodec/libxevd.c", "line": 100, "function": "read_nal_unit_length", "code_snippet": "len = info.nalu_len;", "note": "The returned length is checked only for zero, not against bytes remaining in the AVPacket."},
+          {"file": "libavcodec/libxevd.c", "line": 362, "function": "libxevd_receive_frame", "code_snippet": "bs_read_pos += XEVD_NAL_UNIT_LENGTH_BYTE;", "note": "The wrapper consumes the four-byte prefix, leaving four actual payload bytes in the eight-byte reproducer packet."},
+          {"file": "libavcodec/libxevd.c", "line": 365, "function": "libxevd_receive_frame", "code_snippet": "bitb.ssize = nalu_size;", "note": "It declares 256 readable payload bytes to XEVD even though only four packet bytes remain."},
+          {"file": "libavcodec/libxevd.c", "line": 370, "function": "libxevd_receive_frame", "code_snippet": "xevd_ret = xevd_decode(xectx->id, &bitb, &stat);", "note": "XEVD's SEI path trusts the declared size; ASan observes xevd_bsr_flush cross the exact 72-byte packet-plus-padding allocation."}
+        ]
+      }
+    },
+    "windows": [
+      {"path": "libavcodec/libxevd.c", "start": 83, "end": 108},
+      {"path": "libavcodec/libxevd.c", "start": 315, "end": 390}
+    ]
   }
 ]

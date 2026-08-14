@@ -1841,3 +1841,63 @@ exactly.
 The next unchanged exact-path manifest seals ranks 829–852 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_0829_0852.json` with SHA-256
 `03fd69edb49c46053faf005d622eedd34036c29fef1d7f79f89f08d130869c82`.
+
+### Blind wave 829–852 and libxevd packet-boundary read
+
+The unchanged treatment completed all 24 exact-path trajectories with a
+successful source-bearing action. It used 8,769,899 tokens over 889 model
+calls, made 176 candidate/finding calls, performed 23 automatic context
+compactions, and submitted one formal finding. Peak estimated context was
+11,987 tokens and the largest individual input was 17,272 tokens.
+
+The formal libxevd finding survives with a corrected sink. XEVD NAL length
+prefixes are four bytes, not the two bytes stated in the hunter's prose, and
+the claimed next-loop read is unreachable because an oversized `bs_read_pos`
+makes the loop exit. The root invariant is nevertheless real:
+`read_nal_unit_length` accepts `info.nalu_len` without comparing it with the
+remaining packet, and the current iteration forwards that unchecked value as
+`bitb.ssize` to `xevd_decode`.
+
+An actual public FFmpeg decoder call with the eight packet bytes
+`00 00 01 00 3a 00 05 64` declares a 256-byte NAL followed by a four-byte SEI
+payload whose own payload size is 100. The packet allocation is exactly those
+eight bytes plus FFmpeg's 64-byte padding. ASan reports a heap-buffer-overflow
+read immediately beyond the complete 72-byte allocation through
+`xevd_bsr_flush`, `xevd_bsr_read`, `xevd_eco_sei`, `xevd_dec_nalu`,
+`libxevd_receive_frame`, and `avcodec_send_packet`. The pinned XEVD revision is
+`0f066b3ea33834fe4e25b41c32c66f912f0b5d30`; the FFmpeg revision is
+`795bccdaf57772b1803914dee2f32d52776518e2`. Durable artifacts are
+`evaluations/ffmpeg_xevd_length_reproducer.c` and
+`evaluations/run_ffmpeg_xevd_length_reproducer.py`.
+
+The remaining terminal leads resolve to concrete contracts. High-bit-depth
+H.264 doubles coefficient storage with the pixel width; HEVC transform blocks
+are capped at 64; QSV's bounded writer stops advancing; FFV1 allocates every
+65,536-entry encoder map; and CBS rejects bit reads beyond the unit. DXV checks
+that both words of every eight-byte combination key remain, MMS advances its
+pointer only while decrementing the same remaining length, and ordinary MP3
+file offsets cannot approach signed overflow. Fax reference runs terminate at
+the validated line width, while dictionary ownership flags require
+`av_malloc`-compatible adopted values.
+
+VAAPI tone-map metadata remains in the live filter context and procamp's enum
+values match its four-entry capability array. YADIF uses one negotiated frame
+geometry and per-plane allocation, AFIR returns before a nonpositive tail
+copy, Media Foundation callers only read the returned diagnostic string,
+MSRLE breaks before the allowed one-past pixel, and VVC validates the slice,
+picture header, PPS, SPS, and their IDs before use. The reviewed D3D12 H.264
+encoder, GIF decoder, and HDR encoder paths add no independent violated
+memory or lifetime invariant.
+
+Only after that adjudication closed was the wave compared with the sealed
+survivor set. No sealed survivor falls in ranks 829–852, so libxevd is a novel
+root rather than a rediscovery. The formal-finding novelty result is 1/1, with
+the exact sink repaired offline. Current totals are 41 confirmed root causes
+and 35 dynamically reproduced issues. Coverage is 852/4,995 (17.06%), with
+4,143 historically ranked files remaining.
+
+Directly slicing this machine's unchanged 4,993-file deterministic order
+reproduces ranks 829–852 and their committed manifest exactly. The next
+unchanged exact-path manifest seals ranks 853–876 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_0853_0876.json` with SHA-256
+`19ad49230ad2664e5f09adf862eb7d5597c2d2c5e48a57801abd49483e31bc9a`.
