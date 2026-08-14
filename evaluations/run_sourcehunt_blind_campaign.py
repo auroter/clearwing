@@ -267,6 +267,7 @@ def _source_action_files(session: Path) -> list[str]:
         "execute",
         "grep_source",
         "read_file",
+        "read_ranked_window",
         "read_source_file",
     }
     completed: set[str] = set()
@@ -283,7 +284,11 @@ def _source_action_files(session: Path) -> list[str]:
             tool_call = event.get("tool_call") or {}
             tool_output = event.get("tool_output")
             source_succeeded = not (
-                isinstance(tool_output, dict) and tool_output.get("error")
+                (isinstance(tool_output, dict) and tool_output.get("error"))
+                or (
+                    isinstance(tool_output, str)
+                    and tool_output.lstrip().upper().startswith("ERROR:")
+                )
             )
             if (
                 event.get("event") == "tool_result"

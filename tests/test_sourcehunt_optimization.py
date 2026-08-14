@@ -479,6 +479,145 @@ def test_state_interaction_packet_connects_generic_state_roles(tmp_path) -> None
     assert hunter.state_packets_before_candidate == 1
 
 
+def test_state_interaction_packet_retries_other_windows_before_generic_fallback(
+    tmp_path,
+) -> None:
+    source = tmp_path / "src" / "target.c"
+    source.parent.mkdir()
+    lines = ["int harmless = 0;" for _ in range(260)]
+    lines[20] = "memcpy(local_buffer, input, input_len);"
+    lines[120] = "memset(scratch, 0, scratch_len);"
+    lines[220] = "output[index] = input[index];"
+    source.write_text("\n".join(lines), encoding="utf-8")
+    hunter, ctx = build_hunter_agent(
+        file_target=_target("src/target.c"),
+        repo_path=str(tmp_path),
+        sandbox=None,
+        llm=MagicMock(),
+        session_id="state-interaction-fallback",
+        prompt_bundle="generic-security-v1",
+        scaffold_profile="proof-refinement-ledger-v1",
+        context_profile="compact-small-model-v1",
+    )
+    tools = {tool.name: tool for tool in hunter.tools}
+
+    plan = tools["rank_source_windows"].invoke(
+        {"path": "src/target.c", "max_windows": 3, "window_lines": 20}
+    )
+    for index, window_id in enumerate(("W1", "W2", "W3"), start=1):
+        tools["read_ranked_window"].invoke({"window_id": window_id})
+        packet = tools["read_state_interactions"].invoke({"window_id": window_id})
+        if index < 3:
+            assert "Read W" in packet
+            assert ctx.state_domain_unavailable is False
+
+    assert len(plan["windows"]) == 3
+    assert "generic candidate-ledger workflow" in packet
+    assert ctx.state_packets_read == set()
+    assert ctx.state_packet_failures == {"W1", "W2", "W3"}
+    assert ctx.state_domain_unavailable is True
+
+
+def test_incomplete_state_domain_does_not_lock_the_proof_scaffold(tmp_path) -> None:
+    source = tmp_path / "src" / "target.c"
+    source.parent.mkdir()
+    source.write_text(
+        """
+        typedef struct Context { char *bitstream; int bitstream_index; } Context;
+        void reset(Context *ctx) { ctx->bitstream = 0; }
+        void consume(Context *ctx, char *dst, int size) {
+            memcpy(dst, &ctx->bitstream[ctx->bitstream_index], size);
+        }
+        """,
+        encoding="utf-8",
+    )
+    hunter, ctx = build_hunter_agent(
+        file_target=_target("src/target.c"),
+        repo_path=str(tmp_path),
+        sandbox=None,
+        llm=MagicMock(),
+        session_id="incomplete-state-domain",
+        prompt_bundle="generic-security-v1",
+        scaffold_profile="proof-refinement-ledger-v1",
+        context_profile="compact-small-model-v1",
+    )
+    tools = {tool.name: tool for tool in hunter.tools}
+
+    tools["rank_source_windows"].invoke(
+        {"path": "src/target.c", "max_windows": 3, "window_lines": 20}
+    )
+    tools["read_ranked_window"].invoke({"window_id": "W1"})
+    packet = tools["read_state_interactions"].invoke({"window_id": "W1"})
+
+    assert "No complete stored-state domain" in packet
+    assert ctx.value_domain_plans == {}
+    assert ctx.state_packets_read == set()
+    assert ctx.state_packet_failures == {"W1"}
+
+
+def test_state_packet_gate_allows_ranked_window_retry(tmp_path) -> None:
+    source = tmp_path / "src" / "target.c"
+    source.parent.mkdir()
+    lines = ["int harmless = 0;" for _ in range(220)]
+    lines[20] = "memcpy(local_buffer, input, input_len);"
+    lines[150] = "memset(scratch, 0, scratch_len);"
+    source.write_text("\n".join(lines), encoding="utf-8")
+    calls = [
+        ToolCall("rank", "rank_source_windows", '{"path":"src/target.c"}'),
+        ToolCall("w1", "read_ranked_window", '{"window_id":"W1"}'),
+        ToolCall("packet1", "read_state_interactions", '{"window_id":"W1"}'),
+        ToolCall("w2", "read_ranked_window", '{"window_id":"W2"}'),
+        ToolCall("packet2", "read_state_interactions", '{"window_id":"W2"}'),
+    ]
+
+    class StubLLM:
+        model_name = "stub"
+
+        def __init__(self):
+            self.index = 0
+
+        async def achat(self, **_: object):
+            class Response:
+                first_text = ""
+                texts = []
+                reasoning_content = None
+                provider_model_name = "stub"
+
+                def __init__(self, tool_calls):
+                    self.tool_calls = tool_calls
+                    self.usage = Usage(prompt_tokens=10, completion_tokens=2, total_tokens=12)
+
+            if self.index < len(calls):
+                call = calls[self.index]
+                self.index += 1
+                return Response([call])
+            response = Response([])
+            response.first_text = "done"
+            response.texts = ["done"]
+            return response
+
+    hunter, ctx = build_hunter_agent(
+        file_target=_target("src/target.c"),
+        repo_path=str(tmp_path),
+        sandbox=None,
+        llm=StubLLM(),
+        session_id="state-interaction-gate-retry",
+        prompt_bundle="generic-security-v1",
+        scaffold_profile="proof-refinement-ledger-v1",
+        context_profile="compact-small-model-v1",
+        max_steps_override=6,
+        input_price_per_million=0.0,
+        output_price_per_million=0.0,
+    )
+    ctx.trajectory_dir = tmp_path / "trajectory"
+
+    result = asyncio.run(hunter.arun())
+
+    assert result.stop_reason == "completed"
+    assert {"W1", "W2"} <= ctx.source_windows_read
+    assert {"W1", "W2"} <= ctx.state_packet_failures
+
+
 def test_proof_refinement_is_on_demand_and_obligation_specific(tmp_path) -> None:
     source = tmp_path / "src" / "target.c"
     source.parent.mkdir()

@@ -1646,12 +1646,16 @@ class NativeHunter:
                     tools=request_tools,
                 )
                 peak_context_tokens = max(peak_context_tokens, estimated_context_tokens)
+                generation_options: dict[str, Any] = {}
+                if self.temperature is not None:
+                    generation_options["temperature"] = self.temperature
+                if self.max_output_tokens is not None:
+                    generation_options["max_tokens"] = self.max_output_tokens
                 response = await self.llm.achat(
                     messages=messages,
                     system=request_system,
                     tools=request_tools,
-                    temperature=self.temperature,
-                    max_tokens=self.max_output_tokens,
+                    **generation_options,
                 )
             # Preserve the provider's reasoning_content alongside the
             # visible text. `response.first_text` only returns the
@@ -1792,11 +1796,13 @@ class NativeHunter:
                     )
                     state_packet_coverage_incomplete = bool(
                         self.state_packets_before_candidate > 0
+                        and not self.ctx.state_domain_unavailable
                         and len(self.ctx.state_packets_read)
                         < self.state_packets_before_candidate
                     )
                     value_domain_coverage_incomplete = bool(
                         self.value_domains_before_candidate > 0
+                        and not self.ctx.state_domain_unavailable
                         and len(self.ctx.value_domains) < self.value_domains_before_candidate
                     )
                     unresolved_domain_ids = {
@@ -1814,6 +1820,8 @@ class NativeHunter:
                         and source_actions_since_candidate_update
                         >= self.candidate_gate_after_source_actions
                         and not ranked_coverage_incomplete
+                        and not state_packet_coverage_incomplete
+                        and not value_domain_coverage_incomplete
                         and tool_call.fn_name != "read_domain_consequences"
                     )
                     proof_checkpoint = next(
@@ -1873,7 +1881,8 @@ class NativeHunter:
                         source_action
                         and not ranked_coverage_incomplete
                         and state_packet_coverage_incomplete
-                        and tool_call.fn_name != "read_state_interactions"
+                        and tool_call.fn_name
+                        not in {"read_ranked_window", "read_state_interactions"}
                     )
                     candidate_state_packet_gate_blocked = bool(
                         tool_call.fn_name == "record_candidate"

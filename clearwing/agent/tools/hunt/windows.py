@@ -916,6 +916,16 @@ def _state_interaction_packet(
                 "code_snippet": transfer["text"],
             }
         )
+    if (
+        not plan_payload["distinguished_tokens"]
+        or plan_payload["producer_state"] == "unknown"
+        or plan_payload["transfer"] == "unresolved"
+    ):
+        return (
+            "No complete stored-state domain could be extracted from this anchor; "
+            "read another window.",
+            {},
+        )
     rendered = (
         f"State interaction packet for {planned['window_id']} (orientation, not evidence).\n"
         f"Primary state: {primary}; related state: {related_label}.\n"
@@ -1076,14 +1086,45 @@ def build_window_tools(ctx: HunterContext) -> list[NativeToolSpec]:  # noqa: C90
                 f"ERROR: state interactions for {normalized_id} were already read. "
                 "Use the packet to form or update a candidate."
             )
+        if normalized_id in ctx.state_packet_failures:
+            return (
+                f"ERROR: {normalized_id} did not yield a stable state packet. "
+                "Read and expand a different ranked window."
+            )
         try:
             packet, domain_plan = _state_interaction_packet(Path(ctx.repo_path), planned)
         except OSError as exc:
             return f"ERROR: could not build state interactions for {normalized_id}: {exc}"
-        ctx.state_packets_read.add(normalized_id)
         if domain_plan:
+            ctx.state_packets_read.add(normalized_id)
             ctx.value_domain_plans["D1"] = domain_plan
-        return packet
+            return packet
+
+        ctx.state_packet_failures.add(normalized_id)
+        attempt_limit = min(3, len(ctx.source_window_plan))
+        if len(ctx.state_packet_failures) >= attempt_limit:
+            ctx.state_domain_unavailable = True
+            return (
+                f"{packet} No stable state packet was available after "
+                f"{len(ctx.state_packet_failures)} signal-diverse anchor(s). Continue with "
+                "the generic candidate-ledger workflow: inspect source directly, keep concrete "
+                "hypotheses, and resolve their strongest counterarguments."
+            )
+        next_window = next(
+            (
+                candidate_id
+                for candidate_id in ctx.source_window_plan
+                if candidate_id not in ctx.source_windows_read
+                and candidate_id not in ctx.state_packet_failures
+            ),
+            None,
+        )
+        continuation = (
+            f" Read {next_window}, then call read_state_interactions({next_window})."
+            if next_window is not None
+            else " Read and expand a different ranked window."
+        )
+        return packet + continuation
 
     def read_domain_consequences(domain_id: str, **_: object) -> str:
         normalized_id = domain_id.strip().upper()

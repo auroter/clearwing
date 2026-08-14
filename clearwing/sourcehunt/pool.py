@@ -819,11 +819,11 @@ class HunterPool:
             self._configure_hunter_context(result, work_item_id)
             return result
 
-        global _DEFAULT_HUNTER_FACTORY
-        if _DEFAULT_HUNTER_FACTORY is None:
+        hunter_factory = _DEFAULT_HUNTER_FACTORY
+        if hunter_factory is None:
             from .hunter import build_hunter_agent
 
-            _DEFAULT_HUNTER_FACTORY = build_hunter_agent
+            hunter_factory = build_hunter_agent
 
         if self.config.llm is None:
             raise ValueError("HuntPoolConfig.llm is required when hunter_factory is None")
@@ -832,7 +832,7 @@ class HunterPool:
         seeded_crash = self.config.seeded_crashes_by_file.get(file_path)
         semgrep_hints = self.config.semgrep_hints_by_file.get(file_path)
 
-        result = _DEFAULT_HUNTER_FACTORY(
+        result = hunter_factory(
             file_target=file_target,
             repo_path=self.config.repo_path,
             sandbox=sandbox,

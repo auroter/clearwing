@@ -36,6 +36,8 @@ class HunterContext:
     source_window_plan: dict[str, dict] = field(default_factory=dict)
     source_windows_read: set[str] = field(default_factory=set)
     state_packets_read: set[str] = field(default_factory=set)
+    state_packet_failures: set[str] = field(default_factory=set)
+    state_domain_unavailable: bool = False
     value_domain_plans: dict[str, dict] = field(default_factory=dict)
     value_domains: dict[str, dict] = field(default_factory=dict)
     domain_consequence_plans: dict[str, dict] = field(default_factory=dict)

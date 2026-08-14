@@ -1,7 +1,7 @@
 # SourceHunt optimization campaign
 
 This campaign optimizes Clearwing for small local models while keeping every
-candidate prompt solution-independent. The immediate task model is
+candidate prompt solution-independent. The original task model was
 `dsv4-flash-nvfp4` at:
 
 ```text
@@ -11,6 +11,10 @@ http://tinybox.taile6728b.ts.net:30000/v1
 The vLLM server must enable native tools, for example with
 `--enable-auto-tool-choice --tool-call-parser deepseek_v3`. Both automatic and
 required tool selection have been verified against this endpoint.
+
+The ranks 781–804 continuation used the same frozen treatment with
+`DeepSeek-v4-Flash-0731` through a replacement OpenAI-compatible endpoint.
+Endpoint credentials are runtime configuration and are not committed.
 
 ## Experiment variables
 
@@ -1720,3 +1724,52 @@ tensor leak, Whisper, and rav1e. Coverage is 780/4,995 (15.62%), with 4,215
 ranked files remaining. The next unchanged exact-path manifest seals ranks
 781–804 with SHA-256
 `5961e2cbbe97fb77e5b01f4bbf38058c8f383ef34a057b6960162f07620f4d8a`.
+
+### Blind wave 781–804, scaffold recovery, and sealed-survivor scoring
+
+The first replacement-endpoint pass dispatched all 24 exact paths and used
+7,355,660 tokens, but it is invalid as a negative result. The old source-action
+accounting recognized only nine direct source-tool users, and the proof
+scaffold could deadlock when its first state-interaction anchor did not yield a
+complete domain. It continued demanding a distinguished token, producer, and
+transfer that did not exist instead of allowing another anchor or ordinary
+candidate-ledger analysis. The run made 138 candidate/finding calls but
+submitted no findings.
+
+The scaffold now accepts a state domain only when all three required roles are
+present, retries as many as three ranked source windows, and then explicitly
+falls back to the generic candidate-ledger workflow. Ranked-window retries are
+allowed through the state and proof gates. Campaign accounting also treats a
+successful `read_ranked_window` as a source-bearing action while continuing to
+reject failed reads.
+
+The corrected sealed rerun completed all 24 trajectories with source-bearing
+actions under the corrected accounting. It used 8,383,144 tokens over 878 model
+calls, made 213 candidate/finding calls, and performed 30 automatic context
+compactions. It submitted no formal findings.
+
+Only after the run closed was it scored against the two hidden survivors in
+this wave. The D3D12VA H.264 trajectory independently reconstructed the real
+upload-resource overflow: the fixed mapped resource is sized from decoded
+image geometry while attacker-controlled slice bytes plus inserted start codes
+are copied without a capacity check. It remained an investigating terminal
+candidate rather than a formal submission. The `vf_mestimate` trajectory
+instead followed side-data and predictor-array hypotheses and missed the
+public `INT_MAX` option reaching signed `1 << 31`. Effective hidden-survivor
+recall is therefore 1/2 from terminal ledgers and 0/2 from formal findings.
+Offline review of the other terminal candidates established no additional
+violated memory or lifetime invariant.
+
+These two previously sealed cases bring the corpus totals to 40 confirmed root
+causes and 34 dynamically reproduced issues. The D3D12VA case remains
+source-and-producer-confirmed because no Windows D3D12 runtime was available;
+the `mestimate` case is UBSan-reproduced on both sealed snapshots. For
+longitudinal consistency, coverage remains reported against the historical
+4,995-file corpus: 804/4,995 (16.10%), with 4,191 ranked files remaining. This
+machine's configuration enumerates 4,993 files rather than the historical
+4,995, but the deterministic path order for ranks 781–828 is unchanged; the
+denominator difference does not alter either sealed wave.
+
+The next unchanged exact-path manifest seals ranks 805–828 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_0805_0828.json` with SHA-256
+`5eb4481610d4a6b57bf30b3a5fa76f215fc654e5e5f77e76a5ed49d2803004c5`.
