@@ -2649,3 +2649,69 @@ reproduces ranks 1117–1140 and their committed manifest and SHA-256 exactly. T
 next unchanged exact-path manifest seals ranks 1141–1164 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1141_1164.json` with SHA-256
 `6807fee70ca54862a07d9bf371a8648ed7ca311a6583efd2357cfec1a06fa3f9`.
+
+### Blind wave 1141–1164 and two sanitizer-confirmed overreads
+
+The sealed run completed all 24 exact-path trajectories with a successful
+source-bearing action. It used 6,995,869 tokens over 767 model calls, made 165
+candidate/finding calls, performed 23 automatic context compactions, and
+produced no formal findings. The replacement inference endpoint completed the
+run without model or tool failures.
+
+Offline review confirmed a configuration-gated CLLC overread. The decoder's
+frame-level guard requires only one input bit per output pixel, but
+attacker-defined one-bit ARGB VLC tables can make every pixel consume four
+symbols. The pixel loops perform optimized cache loads without a remaining-bit
+check. FFmpeg exposes `safe_bitstream_reader` as a configurable feature; in the
+supported disabled configuration, codec callers must keep every unchecked load
+inside the input and its padding. A public 64x64 ARGB decode with a 512-byte
+packet passes the 4,096-bit guard exactly but consumes a 136-bit header plus
+16,384 pixel bits. ASan reports a four-byte heap-buffer-overflow read beginning
+exactly after the decoder's 644-byte padded swap allocation.
+
+Review also confirmed a default-code-path overread in the `segment` filter. The
+filter appends `INT64_MAX` as its final output sentinel, but `INT64_MAX` is a
+valid `AVFrame` timestamp because only `INT64_MIN` is reserved as
+`AV_NOPTS_VALUE`. A frame equal to the sentinel advances `current_point` across
+both the configured split and the sentinel. The `while` condition then indexes
+`points[nb_points]` before the post-loop bound check can run. A public one-pixel
+buffer-to-segment graph with `timestamps=0` and pts `INT64_MAX`
+deterministically makes ASan report an eight-byte heap-buffer-overflow read
+exactly after the two-entry, 16-byte point allocation.
+
+The durable artifacts are
+`evaluations/ffmpeg_cllc_short_packet_reproducer.c`,
+`evaluations/run_ffmpeg_cllc_short_packet_reproducer.py`,
+`evaluations/ffmpeg_segment_max_pts_reproducer.c`, and
+`evaluations/run_ffmpeg_segment_max_pts_reproducer.py`. The ignored proof
+records are
+`results/sourcehunt-optimization/cllc-short-packet-reproducer.json` and
+`results/sourcehunt-optimization/segment-max-pts-reproducer.json`; both record
+`expected_observed=true` at pinned FFmpeg commit
+`795bccdaf57772b1803914dee2f32d52776518e2`.
+
+The other terminal leads close under concrete invariants. TTA's decode buffer
+matches the complete frame-length-by-channel loop, and FPS's frame count tracks
+its populated two-slot queue. SheerVideo, VP8 DSP, and LoongArch VP9 DSP consume
+validated frame strides and block storage. RLE's raw branch reserves both its
+header and payload. LCEVC receives crop values repaired by the generic decoder,
+and Ogg packet size remains bounded by its dynamically grown stream buffer.
+
+The remaining arithmetic and API candidates also close. BGMC's algebra keeps
+`delta` in zero through five; Microsoft Video 1 requires four-aligned
+dimensions; DVB subtitle RLE's per-run costs stay inside its documented
+worst-case line reservation; and H.264 QP and slice-offset domains fit the
+padded deblocking tables. AviSynth geometry belongs to the loaded plugin
+contract, subtitle style storage is dynamically grown and null-terminated, and
+the PDV, C93/VOC, FITS, loop, MPEG-H, resolver, and format-option paths retain
+their allocation, library, or immutable-index bounds.
+
+The CLLC and segment files add distinct roots. Current totals are 62 confirmed
+root causes and 52 dynamically reproduced issues. Coverage is 1,164/4,995
+(23.30%), with 3,831 historically ranked files remaining.
+
+Directly slicing this machine's unchanged 4,995-file deterministic order
+reproduces ranks 1141–1164 and their committed manifest and SHA-256 exactly. The
+next unchanged exact-path manifest seals ranks 1165–1188 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1165_1188.json` with SHA-256
+`36e2ad7ac4bd3b845540da599e13e3bb11be36b0a6f78029ded6e1e62cf9bf61`.

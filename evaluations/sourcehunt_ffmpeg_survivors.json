@@ -2409,5 +2409,177 @@
         "end": 185
       }
     ]
+  },
+  {
+    "case_id": "cllc-unsafe-bitreader-short-packet-overread",
+    "finding": {
+      "id": "ffmpeg-cllc-unsafe-bitreader-short-packet-overread",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavcodec/cllc.c",
+      "line_number": 107,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "CLLC's frame-level packet guard requires only one bit per output pixel, but attacker-defined one-bit ARGB VLC tables can make every pixel consume four symbols and therefore four bits. The pixel loops perform optimized VLC cache loads without a remaining-bit check. In FFmpeg's supported --disable-safe-bitstream-reader configuration, a public 64x64 ARGB decode with a 512-byte packet passes the 4,096-bit guard exactly, consumes a 136-bit header plus 16,384 pixel bits, and reads beyond the packet's padded swap allocation. A public avcodec harness that compiles the production decoder for that configuration deterministically aborts under ASan on a four-byte heap-buffer-overflow read beginning exactly after the 644-byte allocation.",
+      "code_snippet": "if (get_bits_left(&gb) < avctx->height * avctx->width) return AVERROR_INVALIDDATA; ... for (i = 0; i < ctx->avctx->width; i++) { UPDATE_CACHE(bits, gb); GET_VLC(...); ... }",
+      "poc": "Build and run evaluations/ffmpeg_cllc_short_packet_reproducer.c with evaluations/run_ffmpeg_cllc_short_packet_reproducer.py against the configured pinned checkout.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a one-bit-per-pixel packet guard underestimates attacker-selected ARGB VLC consumption, so the supported unchecked bitreader walks beyond the padded decoder allocation",
+        "steps": [
+          {
+            "file": "configure",
+            "line": 2183,
+            "function": "configuration",
+            "code_snippet": "safe_bitstream_reader",
+            "note": "FFmpeg exposes the safe bitstream reader as a configurable feature and accepts --disable-safe-bitstream-reader builds."
+          },
+          {
+            "file": "libavcodec/get_bits.h",
+            "line": 53,
+            "function": "bitreader configuration",
+            "code_snippet": "#define UNCHECKED_BITSTREAM_READER !CONFIG_SAFE_BITSTREAM_READER",
+            "note": "With that supported feature disabled, codec callers must keep optimized cache loads within their input and padding."
+          },
+          {
+            "file": "libavcodec/cllc.c",
+            "line": 418,
+            "function": "cllc_decode_frame",
+            "code_snippet": "if (get_bits_left(&gb) < avctx->height * avctx->width) return AVERROR_INVALIDDATA;",
+            "note": "The 64x64 proof supplies exactly 4,096 packet bits and therefore passes the only frame-level pixel-data guard."
+          },
+          {
+            "file": "libavcodec/cllc.c",
+            "line": 105,
+            "function": "read_argb_line",
+            "code_snippet": "for (i = 0; i < ctx->avctx->width; i++) {",
+            "note": "The loop has no per-symbol remaining-bit or BITS_AVAILABLE check."
+          },
+          {
+            "file": "libavcodec/cllc.c",
+            "line": 107,
+            "function": "read_argb_line",
+            "code_snippet": "UPDATE_CACHE(bits, gb); GET_VLC(code, bits, gb, vlc[0].table, VLC_BITS, VLC_DEPTH);",
+            "note": "The alpha VLC is always decoded; the proof maps both one-bit codes to nonzero alpha, which enables three additional one-bit component decodes for every pixel."
+          },
+          {
+            "file": "libavcodec/cllc.c",
+            "line": 249,
+            "function": "decode_argb_frame",
+            "code_snippet": "read_argb_line(ctx, gb, pred, vlc, dst);",
+            "note": "ASan attributes the inlined four-byte read to this production call site and reports it zero bytes after the 644-byte padded swap allocation."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/cllc.c",
+        "start": 46,
+        "end": 83
+      },
+      {
+        "path": "libavcodec/cllc.c",
+        "start": 89,
+        "end": 156
+      },
+      {
+        "path": "libavcodec/cllc.c",
+        "start": 359,
+        "end": 466
+      },
+      {
+        "path": "libavcodec/get_bits.h",
+        "start": 40,
+        "end": 60
+      }
+    ]
+  },
+  {
+    "case_id": "segment-max-timestamp-sentinel-overread",
+    "finding": {
+      "id": "ffmpeg-segment-max-timestamp-sentinel-overread",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavfilter/f_segment.c",
+      "line_number": 168,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The segment filter appends INT64_MAX as the final output sentinel, but INT64_MAX is also a valid AVFrame timestamp because only INT64_MIN is reserved as AV_NOPTS_VALUE. When a frame timestamp equals the sentinel, activate's while loop advances current_point across both the configured split and the sentinel, then re-evaluates current_segment_finished before its later bounds check. A public one-pixel buffer-to-segment graph with timestamps=0 and frame pts INT64_MAX deterministically makes ASan report an eight-byte heap-buffer-overflow read at points[2], exactly after the two-entry 16-byte point allocation.",
+      "code_snippet": "s->points[s->nb_points - 1] = INT64_MAX; ... while (current_segment_finished(ctx, frame)) { ... s->current_point++; } if (s->current_point >= s->nb_points) ...",
+      "poc": "Build and run evaluations/ffmpeg_segment_max_pts_reproducer.c with evaluations/run_ffmpeg_segment_max_pts_reproducer.py against the configured pinned checkout.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a valid maximum timestamp equals the terminal sentinel, advances the output index past the point array, and is compared against points[nb_points] before the post-loop guard",
+        "steps": [
+          {
+            "file": "libavutil/avutil.h",
+            "line": 247,
+            "function": "timestamp contract",
+            "code_snippet": "#define AV_NOPTS_VALUE ((int64_t)UINT64_C(0x8000000000000000))",
+            "note": "Only INT64_MIN denotes an unknown timestamp; the proof's INT64_MAX AVFrame pts is representable and not reserved."
+          },
+          {
+            "file": "libavfilter/f_segment.c",
+            "line": 118,
+            "function": "init",
+            "code_snippet": "count_points(split_str, &s->nb_points); s->nb_points++;",
+            "note": "A single configured timestamp produces two outputs and a two-element point allocation."
+          },
+          {
+            "file": "libavfilter/f_segment.c",
+            "line": 129,
+            "function": "init",
+            "code_snippet": "s->points[s->nb_points - 1] = INT64_MAX;",
+            "note": "The second point is a synthetic maximum-timestamp sentinel rather than an unreachable value."
+          },
+          {
+            "file": "libavfilter/f_segment.c",
+            "line": 168,
+            "function": "current_segment_finished",
+            "code_snippet": "ret = frame->pts >= s->points[s->current_point];",
+            "note": "The first two comparisons succeed for pts INT64_MAX; the third comparison indexes points[2]."
+          },
+          {
+            "file": "libavfilter/f_segment.c",
+            "line": 228,
+            "function": "activate",
+            "code_snippet": "while (current_segment_finished(ctx, frame)) { ... s->current_point++; }",
+            "note": "The condition is re-evaluated immediately after incrementing current_point and has no in-loop bound."
+          },
+          {
+            "file": "libavfilter/f_segment.c",
+            "line": 233,
+            "function": "activate",
+            "code_snippet": "if (s->current_point >= s->nb_points) {",
+            "note": "The intended bound check occurs only after the out-of-bounds while-condition read; ASan reports an eight-byte read exactly after the 16-byte allocation."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/f_segment.c",
+        "start": 47,
+        "end": 96
+      },
+      {
+        "path": "libavfilter/f_segment.c",
+        "start": 99,
+        "end": 143
+      },
+      {
+        "path": "libavfilter/f_segment.c",
+        "start": 160,
+        "end": 239
+      },
+      {
+        "path": "libavutil/avutil.h",
+        "start": 239,
+        "end": 251
+      }
+    ]
   }
 ]
