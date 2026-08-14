@@ -2085,3 +2085,64 @@ Directly slicing this machine's unchanged deterministic order reproduces ranks
 exact-path manifest seals ranks 925–948 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_0925_0948.json` with SHA-256
 `884569b529ad1cf5840d18c9123ad6ba51f5e8c962b13bde3c4039f9f0bbd163`.
+
+### Blind wave 925–948 and two architecture-gated roots
+
+The initial sealed run examined all 24 paths but an inference-endpoint outage
+left `libavfilter/af_channelmap.c` without a completed source-bearing action. A
+deterministic sparse replay of rank 933 completed that path. Together the run
+and replay used 8,259,953 tokens over 854 model calls, made 170
+candidate/finding calls, performed 24 automatic context compactions, and
+submitted no formal findings. All 24 exact-path trajectories therefore ended
+with a successful source-bearing action.
+
+Offline review found two novel architecture-gated roots. The little-endian PPC
+VSX `hyscale_fast_vsx` implementation handles every destination width in
+16-pixel iterations. A public two-byte GRAY8 row scaled to three pixels with
+`SWS_FAST_BILINEAR` selects that implementation on VSX, and the first iteration
+loads source offsets 0–15 and 1–16 before repairing its tail. The public
+`sws_scale` producer places its exact two-byte row before a guard page and
+proves that the geometry is accepted. The arm64 host does not execute VSX, so
+the 15-byte overread is source- and producer-confirmed rather than dynamically
+reproduced.
+
+The VDPAU HEVC backend contains an independent instance of the previously
+observed hardware-RPS capacity failure. The official `VdpPictureInfoHEVC`
+layout gives `RefPicSetStCurrBefore`, `RefPicSetStCurrAfter`, and
+`RefPicSetLtCurr` eight entries each. FFmpeg permits more than eight live
+references in an individual RPS list. VDPAU clamps the three `NumPoc*` fields
+to eight but then iterates the original `h->rps[*].nb_refs` values while
+writing the arrays. Nine resolved surfaces therefore write index eight. The
+same producer invariant is explicitly checked by NVDEC, confirming the
+missing backend guard. With no VDPAU runtime on this machine, this root is
+retained at root-cause-explained evidence.
+
+The durable VSX artifacts are
+`evaluations/ffmpeg_swscale_vsx_tight_row_producer.c` and
+`evaluations/run_ffmpeg_swscale_vsx_tight_row_proof.py`. Its ignored proof
+record is
+`results/sourcehunt-optimization/swscale-vsx-tight-row-proof.json`.
+
+The remaining terminal leads close under concrete contracts. Unchecked
+bytestream helpers were called only after length checks; refstruct pool
+callbacks remain stable; motion-estimation coefficient indices stay within
+0–63; D3D12 scaling descriptors are validated by the driver API; DV audio
+writes fit the profile-owned layout; GXF, SGI RLE, AudioToolbox, and textutils
+operations are length-bounded; and the integer swscale wrapper advances by the
+exact block element count. Mimic rejects resolution changes before ring
+backreferences. OpenCL convolution matrices are restricted to 9, 25, or 49
+entries. AIC and DXV allocations cover their worst cases. MIPS and LoongArch
+DSP paths consume codec-owned padded frames or scratch rows. libcdio supplies a
+lead-out TOC sentinel, and SAP's SDP builders use size-bounded appends into the
+remaining announcement buffer.
+
+Neither file had a prior survivor entry, so both roots are novel.
+Current totals are 51 confirmed root causes and 43 dynamically reproduced
+issues. Coverage is 948/4,995 (18.98%), with 4,047 historically ranked files
+remaining.
+
+Directly slicing this machine's unchanged 4,995-file deterministic order
+reproduces ranks 925–948 and their committed manifest and SHA-256 exactly. The
+next unchanged exact-path manifest seals ranks 949–972 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_0949_0972.json` with SHA-256
+`0947447d4440ec963531bb70c4a16f676c514fec9a8f081d0e904ac4b1296bae`.

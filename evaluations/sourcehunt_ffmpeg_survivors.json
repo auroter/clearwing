@@ -1596,5 +1596,78 @@
       {"path": "libavformat/scd.c", "start": 150, "end": 238},
       {"path": "libavformat/scd.c", "start": 291, "end": 344}
     ]
+  },
+  {
+    "case_id": "swscale-vsx-tight-row-overread",
+    "finding": {
+      "id": "ffmpeg-swscale-vsx-tight-row-overread",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libswscale/ppc/swscale_vsx.c",
+      "line_number": 1712,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "The little-endian PPC VSX fast horizontal scaler processes every destination width in 16-pixel iterations and unconditionally issues 16-byte source loads at offsets xx and xx+1 before repairing the scalar tail. The public sws_scale API accepts caller-owned planes and strides, and the slice layer forwards each caller row directly to hyscale_fast_vsx. Scaling a tightly backed two-byte GRAY8 row to three pixels with SWS_FAST_BILINEAR selects this routine on VSX and its first iteration reads through source offset 16, fifteen bytes beyond the row. A guard-page public producer proves the exact tight-row geometry is accepted; this arm64 host cannot execute the architecture-gated VSX implementation, so the load span is source-confirmed rather than sanitizer-observed.",
+      "code_snippet": "for (i = 0; i < dstWidth; i += 16) { ... vin = vec_vsx_ld(0, &src[xx]); ... vin2 = vec_vsx_ld(1, &src[xx]); }",
+      "poc": "Run evaluations/run_ffmpeg_swscale_vsx_tight_row_proof.py against the configured pinned checkout; execute the public producer on a little-endian PPC VSX host for a hardware runtime fault.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a public two-byte source row is forwarded without padding to the VSX fast scaler, whose first full-vector iteration reads offsets zero through sixteen before its post-loop tail correction",
+        "steps": [
+          {"file": "libswscale/swscale.h", "line": 544, "function": "sws_scale", "code_snippet": "int sws_scale(SwsContext *c, const uint8_t *const srcSlice[], const int srcStride[], ...)", "note": "The public API accepts caller-owned plane pointers and explicit strides; the proof supplies an exact two-byte row immediately before a guard page."},
+          {"file": "libswscale/slice.c", "line": 176, "function": "ff_init_slice_from_src", "code_snippet": "s->plane[i].line[...] = src_i + j * stride[i];", "note": "The source slice records the caller's row pointer directly rather than copying it into padded storage."},
+          {"file": "libswscale/hscale.c", "line": 55, "function": "lum_h_scale", "code_snippet": "c->hyscale_fast(c, (int16_t*)dst[dst_pos], dstW, src[src_pos], srcW, xInc);", "note": "The recorded caller row reaches the architecture fast scaler unchanged."},
+          {"file": "libswscale/ppc/swscale_vsx.c", "line": 2033, "function": "ff_sws_init_swscale_vsx", "code_snippet": "if (c->opts.flags & SWS_FAST_BILINEAR && c->opts.dst_w >= c->opts.src_w ... ) c->hyscale_fast = hyscale_fast_vsx;", "note": "A 2-to-3 fast-bilinear upscale selects hyscale_fast_vsx on a little-endian VSX host."},
+          {"file": "libswscale/ppc/swscale_vsx.c", "line": 1700, "function": "hyscale_fast_vsx", "code_snippet": "for (i = 0; i < dstWidth; i += 16)", "note": "Destination width three still enters one full 16-pixel vector iteration."},
+          {"file": "libswscale/ppc/swscale_vsx.c", "line": 1712, "function": "hyscale_fast_vsx", "code_snippet": "vin = vec_vsx_ld(0, &src[xx]); ... vin2 = vec_vsx_ld(1, &src[xx]);", "note": "At initial xx zero, the loads cover byte offsets 0..15 and 1..16, extending fifteen bytes beyond the two-byte row."},
+          {"file": "libswscale/ppc/swscale_vsx.c", "line": 1757, "function": "hyscale_fast_vsx", "code_snippet": "for (i=dstWidth-1; (i*xInc)>>16 >=srcW-1; i--) dst[i] = src[srcW-1]*128;", "note": "The intended right-edge repair occurs only after both out-of-range vector loads."}
+        ]
+      }
+    },
+    "windows": [
+      {"path": "libswscale/swscale.h", "start": 510, "end": 547},
+      {"path": "libswscale/slice.c", "start": 145, "end": 188},
+      {"path": "libswscale/hscale.c", "start": 39, "end": 85},
+      {"path": "libswscale/ppc/swscale_vsx.c", "start": 1669, "end": 1759},
+      {"path": "libswscale/ppc/swscale_vsx.c", "start": 2019, "end": 2042}
+    ]
+  },
+  {
+    "case_id": "vdpau-hevc-rps-list-overflow",
+    "finding": {
+      "id": "ffmpeg-vdpau-hevc-rps-list-overflow",
+      "finding_type": "out_of_bounds_write",
+      "cwe": "CWE-787",
+      "file": "libavcodec/vdpau_hevc.c",
+      "line_number": 303,
+      "severity": "high",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "The VDPAU HEVC start-frame path copies each current short- or long-term reference-picture-set list into an official VdpPictureInfoHEVC array whose capacity is eight. FFmpeg's parser and RPS builder permit an individual list to contain more than eight live references. The VDPAU path recognizes the API limit and clamps NumPocStCurrBefore, NumPocStCurrAfter, and NumPocLtCurr to eight, but its three copy loops still iterate the original h->rps[*].nb_refs values and advance j for every surface found in the 16-entry DPB. Nine matched references therefore write index eight beyond the corresponding RefPicSet array. The current macOS host has no VDPAU runtime, so this architecture-gated root is retained from source, the official API layout, and the complete parser-to-hardware call chain.",
+      "code_snippet": "info->NumPocStCurrBefore = 8; ... for (... i < h->rps[ST_CURR_BEF].nb_refs; i++) ... info->RefPicSetStCurrBefore[j] = k;",
+      "poc": "Decode a valid HEVC stream through VDPAU with nine or more live references in StCurrBefore, StCurrAfter, or LtCurr; the corresponding VdpPictureInfoHEVC RefPicSet array has only eight entries.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "bitstream RPS counts survive parser and DPB construction above the VDPAU eight-entry limit; only the advertised counts are clamped while the original counts still bound three writes",
+        "steps": [
+          {"file": "libavcodec/hevc/ps.c", "line": 197, "function": "ff_hevc_decode_short_term_rps", "code_snippet": "if (rps->num_negative_pics >= HEVC_MAX_REFS || nb_positive_pics >= HEVC_MAX_REFS)", "note": "Each short-term side may contain 15 entries because HEVC_MAX_REFS is 16; there is no eight-reference cap."},
+          {"file": "libavcodec/hevc/refs.c", "line": 503, "function": "add_candidate_ref", "code_snippet": "if (ref == s->cur_frame || list->nb_refs >= HEVC_MAX_REFS)", "note": "RPS construction admits more than eight resolved live frames into an individual list."},
+          {"file": "libavcodec/hevc/hevcdec.c", "line": 3339, "function": "hevc_frame_start", "code_snippet": "ret = ff_hevc_frame_rps(s, l); ... FF_HW_CALL(s->avctx, start_frame, ...)", "note": "The populated RPS is constructed before the VDPAU start-frame callback consumes it."},
+          {"file": "libavcodec/vdpau_hevc.c", "line": 269, "function": "vdpau_hevc_start_frame", "code_snippet": "info->NumPocStCurrBefore = h->rps[ST_CURR_BEF].nb_refs; ... info->NumPocStCurrBefore = 8;", "note": "The path explicitly recognizes the eight-reference API limit but clamps only the count field."},
+          {"file": "libavcodec/vdpau_hevc.c", "line": 296, "function": "vdpau_hevc_start_frame", "code_snippet": "for (... i < h->rps[ST_CURR_BEF].nb_refs; i++)", "note": "The subsequent loop remains bounded by the original, potentially larger list count."},
+          {"file": "libavcodec/vdpau_hevc.c", "line": 303, "function": "vdpau_hevc_start_frame", "code_snippet": "info->RefPicSetStCurrBefore[j] = k;", "note": "The official libvdpau header declares this and the After/Lt arrays as uint8_t[8]; the ninth matched DPB surface writes index eight."},
+          {"file": "libavcodec/nvdec_hevc.c", "line": 222, "function": "nvdec_hevc_start_frame", "code_snippet": "if (s->rps[LT_CURR].nb_refs > FF_ARRAY_ELEMS(ppc->RefPicSetLtCurr) || ...)", "note": "An independent HEVC hardware backend explicitly rejects the same over-capacity lists before copying them."}
+        ]
+      }
+    },
+    "windows": [
+      {"path": "libavcodec/hevc/hevc.h", "start": 112, "end": 128},
+      {"path": "libavcodec/hevc/ps.c", "start": 180, "end": 225},
+      {"path": "libavcodec/hevc/refs.c", "start": 495, "end": 590},
+      {"path": "libavcodec/hevc/hevcdec.c", "start": 3328, "end": 3375},
+      {"path": "libavcodec/vdpau_hevc.c", "start": 245, "end": 362},
+      {"path": "libavcodec/nvdec_hevc.c", "start": 210, "end": 258}
+    ]
   }
 ]
