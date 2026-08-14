@@ -2401,3 +2401,53 @@ reproduces ranks 1021–1044 and their committed manifest and SHA-256 exactly.
 The next unchanged exact-path manifest seals ranks 1045–1068 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1045_1068.json` with SHA-256
 `606cd6d6abf898b363bf813a88c1417f8b60b67669d66352f29efde1db6a9f44`.
+
+### Blind wave 1045–1068 and producer-contract closures
+
+The sealed run completed all 24 exact-path trajectories with a successful
+source-bearing action. It used 7,214,185 tokens over 787 model calls, made 148
+candidate/finding calls, performed 19 automatic context compactions, and
+produced zero accepted formal findings. The replacement inference endpoint
+completed the run without reporting failures.
+
+Offline review found no new confirmed root cause. The most concrete apparent
+overflow was in the shared Huffman length generator, but its `h`, `up`, `map`,
+and `len` arrays are views into one deliberately oversized allocation. The
+bytes remaining from `len` cover its maximum internal-node index
+`2 * size - 2`, and the corresponding `up` indices remain below the separately
+reserved `2 * stats_size` entries. MSRLE's 4-bit raw-row theory also closes
+arithmetically: its padded stride is `ceil(width / 8) * 4`, which is always at
+least the `ceil(width / 2)` bytes read by the nibble loop. CPiA checks each
+destination pointer at the top of every compressed-token iteration, so a large
+skip can move a cursor beyond the row but cannot be followed by a write.
+
+The other terminal leads close under producer and allocation contracts.
+Rawvideo's image-size validator bounds the bitpacked and v210 products before
+their `int` packet sizes are calculated. GEQ uses overflow-checking allocation
+for the exact subsampled plane dimensions. Colormap accepts only positive
+image-size options and caps both its map count and Gaussian workspace at 64.
+CUDA scaling receives valid frame cropping metadata and samples through bounded
+texture resources; MediaCodec's JNI capacity is the direct buffer's actual
+backing capacity. VapourSynth asserts the external frame geometry, and the
+framerate SAD inputs are complete frames from the same negotiated link.
+TwinVQ's fixed mode, period, and shape domains keep its rounding table and peak
+writes in range. MxPEG's two 16-bit macroblock dimensions cannot overflow their
+unsigned product, and its packet-span check rejects an unavailable bitmask.
+The robust MPEG-audio RTP splitter advances only by a header plus an ADU already
+shown to fit the remaining buffer. DASH templates use fixed format patterns and
+bounded `snprintf`; AIFF chunk sizes remain in `int64_t` and AVIO bounds reads;
+and the mux path's suspicious NULL-data cases violate the public AVPacket
+contract rather than arise from accepted media. Back-reference copies, vflip,
+ANM, IMM5, OpenCL overlay, AES, NLMeans, the MIPS IDCT, and the remaining paths
+likewise retain their source, destination, library, or frame-allocation
+invariants.
+
+No survivor entry was added. Current totals remain 56 confirmed root causes and
+47 dynamically reproduced issues. Coverage is 1,068/4,995 (21.38%), with 3,927
+historically ranked files remaining.
+
+Directly slicing this machine's unchanged 4,995-file deterministic order
+reproduces ranks 1045–1068 and their committed manifest and SHA-256 exactly.
+The next unchanged exact-path manifest seals ranks 1069–1092 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1069_1092.json` with SHA-256
+`99ba2473feae3eea95b4b0468a6dba13d5e4fb3f1b7e67855b3e638bb04afbc3`.
