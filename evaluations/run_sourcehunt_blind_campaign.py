@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import getpass
 import hashlib
 import json
 import subprocess
@@ -39,6 +40,11 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument("--compile-commands", required=True)
     parser.add_argument("--base-url", required=True)
     parser.add_argument("--api-key", default="local")
+    parser.add_argument(
+        "--api-key-stdin",
+        action="store_true",
+        help="read the API key from a hidden terminal prompt",
+    )
     parser.add_argument("--model", default="dsv4-flash-nvfp4")
     parser.add_argument("--output-dir", required=True)
     parser.add_argument(
@@ -196,6 +202,12 @@ def _load_paths(raw: str | None) -> list[str] | None:
     if len(set(paths)) != len(paths):
         raise ValueError("paths-file cannot contain duplicate paths")
     return paths
+
+
+def _resolve_api_key(args: argparse.Namespace) -> str:
+    if args.api_key_stdin:
+        return getpass.getpass("API key: ")
+    return str(args.api_key)
 
 
 def _config_digest(config: dict) -> str:
@@ -514,7 +526,9 @@ async def _main(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    asyncio.run(_main(_arguments()))
+    args = _arguments()
+    args.api_key = _resolve_api_key(args)
+    asyncio.run(_main(args))
 
 
 if __name__ == "__main__":

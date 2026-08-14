@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import json
+from argparse import Namespace
 
-from evaluations.run_sourcehunt_blind_campaign import _source_action_files
+from evaluations import run_sourcehunt_blind_campaign as blind_campaign
+from evaluations.run_sourcehunt_blind_campaign import (
+    _resolve_api_key,
+    _source_action_files,
+)
 
 
 def _event(**values: object) -> str:
@@ -51,3 +56,16 @@ def test_failed_ranked_window_does_not_count_as_source_bearing_action(tmp_path) 
     )
 
     assert _source_action_files(tmp_path) == []
+
+
+def test_api_key_stdin_uses_hidden_prompt(monkeypatch) -> None:
+    monkeypatch.setattr(
+        blind_campaign.getpass,
+        "getpass",
+        lambda prompt: "memory-only-key",
+    )
+
+    assert (
+        _resolve_api_key(Namespace(api_key="cli-key", api_key_stdin=True))
+        == "memory-only-key"
+    )
