@@ -1669,5 +1669,261 @@
       {"path": "libavcodec/vdpau_hevc.c", "start": 245, "end": 362},
       {"path": "libavcodec/nvdec_hevc.c", "start": 210, "end": 258}
     ]
+  },
+  {
+    "case_id": "arls-unaligned-order-coefficient-overread",
+    "finding": {
+      "id": "ffmpeg-arls-unaligned-order-coefficient-overread",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavfilter/arls_template.c",
+      "line_number": 50,
+      "severity": "high",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The public ARLS filter accepts every order from 1 through INT16_MAX, rounds that order up to a multiple of 16 for its kernel allocations, and initializes each channel offset to kernel_size - 1. fir_sample nevertheless derives its coefficient-copy source from the unaligned order. For order 17, kernel_size is 32 and the initial offset is 31, so the first 17-float memcpy begins at coeffs - 14. A public two-input abuffer -> arls -> abuffersink graph processing one sample makes ASan report a 68-byte heap-buffer-overflow read beginning 56 bytes before the coefficient allocation.",
+      "code_snippet": "s->kernel_size = FFALIGN(s->order, 16); ... dst[0] = s->kernel_size - 1; ... memcpy(tmp, coeffs + order - *offset, order * sizeof(ftype));",
+      "poc": "Run evaluations/run_ffmpeg_arls_unaligned_order_reproducer.py against the configured sanitizer-instrumented checkout.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a public unaligned filter order is rounded up for allocation and offset initialization, but the first coefficient-copy pointer mixes the original order with the larger aligned offset and points before the heap buffer",
+        "steps": [
+          {
+            "file": "libavfilter/af_arls.c",
+            "line": 69,
+            "function": "arls_options",
+            "code_snippet": "{ \"order\", \"set the filter order\", OFFSET(order), AV_OPT_TYPE_INT, {.i64=16}, 1, INT16_MAX, A }",
+            "note": "The public filter option accepts order 17; it is not restricted to multiples of 16."
+          },
+          {
+            "file": "libavfilter/af_arls.c",
+            "line": 184,
+            "function": "config_output",
+            "code_snippet": "s->kernel_size = FFALIGN(s->order, 16);",
+            "note": "Order 17 becomes a 32-element kernel."
+          },
+          {
+            "file": "libavfilter/af_arls.c",
+            "line": 191,
+            "function": "config_output",
+            "code_snippet": "s->coeffs = ff_get_audio_buffer(outlink, 2 * s->kernel_size);",
+            "note": "The coefficient storage begins at a normal heap allocation; it has no readable prefix."
+          },
+          {
+            "file": "libavfilter/af_arls.c",
+            "line": 210,
+            "function": "config_output",
+            "code_snippet": "dst[0] = s->kernel_size - 1;",
+            "note": "The initial channel offset is 31 rather than order - 1 (16)."
+          },
+          {
+            "file": "libavfilter/arls_template.c",
+            "line": 50,
+            "function": "fir_sample_float",
+            "code_snippet": "memcpy(tmp, coeffs + order - *offset, order * sizeof(ftype));",
+            "note": "The first float copy starts at index 17 - 31 = -14 and reads 68 bytes; ASan observes it 56 bytes before the allocation."
+          },
+          {
+            "file": "libavfilter/arls_template.c",
+            "line": 145,
+            "function": "filter_channels_float",
+            "code_snippet": "output[n] = fn(process_sample)(s, input[n], desired[n], c);",
+            "note": "One ordinary input sample reaches fir_sample through the production channel loop."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/af_arls.c",
+        "start": 64,
+        "end": 82
+      },
+      {
+        "path": "libavfilter/af_arls.c",
+        "start": 179,
+        "end": 212
+      },
+      {
+        "path": "libavfilter/arls_template.c",
+        "start": 42,
+        "end": 62
+      },
+      {
+        "path": "libavfilter/arls_template.c",
+        "start": 132,
+        "end": 151
+      }
+    ]
+  },
+  {
+    "case_id": "concat-repeated-next-command-overread",
+    "finding": {
+      "id": "ffmpeg-concat-repeated-next-command-overread",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavfilter/avf_concat.c",
+      "line_number": 240,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The concat filter's public next command calls flush_segment without checking whether the current segment index has already reached the input count. In a one-segment, one-output graph, the first command legitimately reads cat->in[0] and advances cur_idx to nb_inputs. A second command immediately calls find_next_delta_ts again and reads cat->in[nb_inputs]. A public abuffer -> concat -> abuffersink graph issuing two avfilter_graph_send_command calls makes ASan report an eight-byte heap-buffer-overflow read exactly after the 24-byte input-state allocation.",
+      "code_snippet": "if (!strcmp(cmd, \"next\")) return flush_segment(ctx); ... pts = cat->in[i++].pts; ... cat->cur_idx += ctx->nb_outputs;",
+      "poc": "Run evaluations/run_ffmpeg_concat_repeated_next_reproducer.py against the configured sanitizer-instrumented checkout.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "the first public next command advances the segment cursor exactly to the end of the input-state array, while a repeated command bypasses activation's end guards and reads the one-past-end state entry",
+        "steps": [
+          {
+            "file": "libavfilter/avf_concat.c",
+            "line": 347,
+            "function": "init",
+            "code_snippet": "cat->in = av_calloc(ctx->nb_inputs, sizeof(*cat->in));",
+            "note": "A one-segment, one-stream graph allocates one 24-byte concat_in entry."
+          },
+          {
+            "file": "libavfilter/avfiltergraph.c",
+            "line": 1454,
+            "function": "avfilter_graph_send_command",
+            "code_snippet": "int avfilter_graph_send_command(AVFilterGraph *graph, const char *target, const char *cmd, ...)",
+            "note": "The public API dispatches the harness's next commands to the concat instance."
+          },
+          {
+            "file": "libavfilter/avf_concat.c",
+            "line": 446,
+            "function": "process_command",
+            "code_snippet": "if (!strcmp(cmd, \"next\")) { ... return flush_segment(ctx); }",
+            "note": "No cur_idx < nb_inputs condition protects command-driven flushing."
+          },
+          {
+            "file": "libavfilter/avf_concat.c",
+            "line": 291,
+            "function": "flush_segment",
+            "code_snippet": "find_next_delta_ts(ctx, &seg_delta); cat->cur_idx += ctx->nb_outputs;",
+            "note": "The first command reads the valid segment and advances cur_idx from zero to nb_inputs."
+          },
+          {
+            "file": "libavfilter/avf_concat.c",
+            "line": 240,
+            "function": "find_next_delta_ts",
+            "code_snippet": "pts = cat->in[i++].pts;",
+            "note": "The second command enters with i == nb_inputs and performs the ASan-observed one-past-end eight-byte read."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/avfiltergraph.c",
+        "start": 1448,
+        "end": 1475
+      },
+      {
+        "path": "libavfilter/avf_concat.c",
+        "start": 233,
+        "end": 245
+      },
+      {
+        "path": "libavfilter/avf_concat.c",
+        "start": 284,
+        "end": 309
+      },
+      {
+        "path": "libavfilter/avf_concat.c",
+        "start": 311,
+        "end": 351
+      },
+      {
+        "path": "libavfilter/avf_concat.c",
+        "start": 441,
+        "end": 465
+      }
+    ]
+  },
+  {
+    "case_id": "tonemap-opencl-invalid-transfer-assert",
+    "finding": {
+      "id": "ffmpeg-tonemap-opencl-invalid-transfer-assert",
+      "finding_type": "denial_of_service",
+      "cwe": "CWE-400",
+      "file": "libavfilter/vf_tonemap_opencl.c",
+      "line_number": 164,
+      "severity": "low",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "The public tonemap_opencl transfer option accepts every integer from -1 through INT_MAX although initialization supports only BT.709 and BT.2020-10 output transfer characteristics. On the first valid OpenCL P010 HDR frame, filter_frame copies any explicit option value into output->color_trc and then into trc_out. tonemap_opencl_init enforces the narrower domain with av_assert0, whose definition always calls abort on failure. Supplying transfer=100 therefore terminates the process instead of returning an unsupported-option error. This machine's sealed FFmpeg configuration has OpenCL disabled, so the runtime-gated root is retained from the complete public-option-to-abort source path.",
+      "code_snippet": "{ \"transfer\", ... -1, INT_MAX, ... }; ... output->color_trc = ctx->trc; ... av_assert0(ctx->trc_out == AVCOL_TRC_BT709 || ctx->trc_out == AVCOL_TRC_BT2020_10);",
+      "poc": "Process one valid OpenCL-backed P010 frame marked SMPTE 2084 or ARIB B67 through tonemap_opencl=transfer=100 on an OpenCL-enabled build.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a public integer option admits unsupported transfer identifiers, which reach an always-enabled internal assertion after the filter has accepted an otherwise valid HDR hardware frame",
+        "steps": [
+          {
+            "file": "libavfilter/vf_tonemap_opencl.c",
+            "line": 495,
+            "function": "tonemap_opencl_options",
+            "code_snippet": "{ \"transfer\", \"set transfer characteristic\", OFFSET(trc), AV_OPT_TYPE_INT, {.i64 = AVCOL_TRC_BT709}, -1, INT_MAX, FLAGS, .unit = \"transfer\" }",
+            "note": "The public option parser accepts transfer=100 and other unsupported integers."
+          },
+          {
+            "file": "libavfilter/vf_tonemap_opencl.c",
+            "line": 370,
+            "function": "tonemap_opencl_filter_frame",
+            "code_snippet": "if (ctx->trc != -1) output->color_trc = ctx->trc;",
+            "note": "An explicit option replaces the output frame's transfer characteristic without validation."
+          },
+          {
+            "file": "libavfilter/vf_tonemap_opencl.c",
+            "line": 380,
+            "function": "tonemap_opencl_filter_frame",
+            "code_snippet": "ctx->trc_out = output->color_trc;",
+            "note": "The unsupported value becomes the initializer's array index and assertion operand."
+          },
+          {
+            "file": "libavfilter/vf_tonemap_opencl.c",
+            "line": 390,
+            "function": "tonemap_opencl_filter_frame",
+            "code_snippet": "if (!(input->color_trc == AVCOL_TRC_SMPTE2084 || input->color_trc == AVCOL_TRC_ARIB_STD_B67)) ... if (input_frames_ctx->sw_format != AV_PIX_FMT_P010) ...",
+            "note": "A normal supported OpenCL P010 HDR input passes the checks before initialization."
+          },
+          {
+            "file": "libavfilter/vf_tonemap_opencl.c",
+            "line": 164,
+            "function": "tonemap_opencl_init",
+            "code_snippet": "av_assert0(ctx->trc_out == AVCOL_TRC_BT709 || ctx->trc_out == AVCOL_TRC_BT2020_10);",
+            "note": "The unsupported public value fails an always-enabled assertion rather than a recoverable validation branch."
+          },
+          {
+            "file": "libavutil/avassert.h",
+            "line": 42,
+            "function": "av_assert0",
+            "code_snippet": "if (!(cond)) { ... abort(); }",
+            "note": "av_assert0 is explicitly documented as always enabled and terminates the process."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/vf_tonemap_opencl.c",
+        "start": 140,
+        "end": 175
+      },
+      {
+        "path": "libavfilter/vf_tonemap_opencl.c",
+        "start": 360,
+        "end": 406
+      },
+      {
+        "path": "libavfilter/vf_tonemap_opencl.c",
+        "start": 484,
+        "end": 505
+      },
+      {
+        "path": "libavutil/avassert.h",
+        "start": 35,
+        "end": 50
+      }
+    ]
   }
 ]

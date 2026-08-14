@@ -2146,3 +2146,94 @@ reproduces ranks 925–948 and their committed manifest and SHA-256 exactly. The
 next unchanged exact-path manifest seals ranks 949–972 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_0949_0972.json` with SHA-256
 `0947447d4440ec963531bb70c4a16f676c514fec9a8f081d0e904ac4b1296bae`.
+
+### Blind wave 949–972 and three public-configuration roots
+
+The sealed run completed all 24 exact-path trajectories with a successful
+source-bearing action. It used 7,195,478 tokens over 795 model calls, made 167
+candidate/finding calls, performed 28 automatic context compactions, and
+produced zero accepted formal findings. The replacement inference endpoint
+remained healthy for the complete run.
+
+Offline review found three novel roots. The ARLS filter accepts orders that are
+not multiples of 16, rounds the selected order up for its kernel allocation,
+and initializes the coefficient offset from that aligned size. The sample path
+then calculates the copy source using the original order. With public
+`order=17`, the kernel size is 32 and the initial offset is 31, so the first
+17-float copy begins at coefficient index -14. A public two-input
+`abuffer -> arls -> abuffersink` graph processing one sample makes ASan report
+a 68-byte heap-buffer-overflow read beginning 56 bytes before the coefficient
+allocation.
+
+The concat filter's ordinary activation path preserves complete
+`nb_outputs`-sized segment groups, but its public `next` command bypasses the
+end-of-input check. In a one-segment graph, the first command reads the valid
+input state and advances `cur_idx` to `nb_inputs`. A second command calls
+`find_next_delta_ts` again and reads `cat->in[nb_inputs]`. A public
+`abuffer -> concat -> abuffersink` graph issuing two
+`avfilter_graph_send_command` calls makes ASan report an eight-byte
+heap-buffer-overflow read immediately after the 24-byte input-state
+allocation.
+
+The OpenCL tonemap filter accepts every integer through `INT_MAX` for its
+public `transfer` option, although its initializer permits only BT.709 or
+BT.2020-10 output transfer characteristics. A supplied value is copied to the
+output frame and `trc_out` before initialization. A valid OpenCL P010 HDR frame
+with `transfer=100` therefore reaches an always-enabled `av_assert0` and calls
+`abort` instead of returning an unsupported-option error. The sealed build on
+this host has OpenCL disabled, so this configuration-triggered denial of
+service is retained at root-cause-explained evidence rather than dynamically
+reproduced.
+
+The durable dynamic artifacts are
+`evaluations/ffmpeg_arls_unaligned_order_reproducer.c`,
+`evaluations/run_ffmpeg_arls_unaligned_order_reproducer.py`,
+`evaluations/ffmpeg_concat_repeated_next_reproducer.c`, and
+`evaluations/run_ffmpeg_concat_repeated_next_reproducer.py`. Their ignored
+proof records are
+`results/sourcehunt-optimization/arls-unaligned-order-reproducer.json` and
+`results/sourcehunt-optimization/concat-repeated-next-reproducer.json`; both
+record `expected_observed=true` at pinned FFmpeg commit
+`795bccdaf57772b1803914dee2f32d52776518e2`.
+
+The remaining terminal leads close under concrete contracts. Crossfeed's
+consumed frames and side buffers have the exact configured block size. The
+softfloat interpolation tables intentionally include the extra endpoint, and
+the square-root callers preserve normalized positive mantissas. RTP VC2HQ
+checks each fragment span and sizes its final packet from the dynamic buffer.
+Texture DSP consumes valid frame strides. Raw packet allocation rejects sizes
+that would collide with packet padding. XSUB converts the suspected negative
+bit-writer capacity to a zero-capacity writer and returns
+`AVERROR_BUFFER_TOO_SMALL`. FIFO callbacks receive a documented maximum and
+all in-tree callbacks honor it. RPZA's four-color branch guarantees a nonzero
+selected component range. YOP's pending low nibble and source pointer checks
+prevent a second tag read past the packet. PNM's image-size allocation already
+includes every float plane. JPEG XS reads from the full padded parser packet;
+its wrong CDT start pointer causes semantic misparsing rather than an
+allocation overread. CBS SEI allocations, AMF buffers, MPC8 parsing, URL
+helpers, Vulkan specialization lists, logging, sample-format copies, pixel
+descriptors, and the remaining codec/DSP paths likewise remain within their
+producer, allocation, or public-API contracts.
+
+None of the three files had a prior survivor entry, so all three roots are
+novel. Current totals are 54 confirmed root causes and 45 dynamically
+reproduced issues. Coverage is 972/4,995 (19.46%), with 4,023 historically
+ranked files remaining.
+
+Directly slicing this machine's unchanged 4,995-file deterministic order
+reproduces ranks 949–972 and their committed manifest and SHA-256 exactly. The
+next unchanged exact-path manifest seals ranks 973–996 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_0973_0996.json` with SHA-256
+`e3c114a57a72045d56d9eb100e81c7769714e4258f6af2c0df353102f4211937`.
+
+### Post-hoc confirmation of the H.264 slice-sentinel survivor
+
+After the H.264 slice-sentinel root had already been discovered and sealed, an
+operator supplied independent repair evidence. The repair rejects
+`current_slice >= 0xFFFE` before incrementing the wider counter, confirming the
+exact collision boundary with the `uint16_t` table's `0xFFFF` sentinel. The
+additional trace confirms that each picture re-poisons the spare table column,
+that the false top-left match is gated through `deblocking_filter == 2`, and
+that the resulting `top_borders[...][mb_x - 1]` pointer reaches luma and chroma
+`XCHG` writes at `mb_x == 0`. This post-hoc material was not supplied to any
+blind trajectory, ranking pass, or inference prompt.
