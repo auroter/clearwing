@@ -2337,3 +2337,67 @@ reproduces ranks 997–1020 and their committed manifest and SHA-256 exactly. Th
 next unchanged exact-path manifest seals ranks 1021–1044 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1021_1044.json` with SHA-256
 `0cbb26440c0d20c9cf16978679ce45e5afb32bb518a6f1dec7a526bc7bc95fd4`.
+
+### Blind wave 1021–1044 and a CamStudio stale-heap disclosure
+
+The sealed run completed all 24 exact-path trajectories with a successful
+source-bearing action. It used 7,919,824 tokens over 865 model calls, made 181
+candidate/finding calls, performed 25 automatic context compactions, and
+produced zero accepted formal findings. The replacement inference endpoint
+completed the run without reporting failures.
+
+Offline review confirmed one novel root in the CamStudio decoder. For widths
+not divisible by four, its compatibility calculation permits a decompressed
+length shorter than the decoder's aligned buffer. The output copy nevertheless
+uses the visible row length and aligned source stride. A public 5x1 BGR24
+context therefore allocates a 16-byte decompression row and computes
+`bugdelta == 4`; a valid zlib keyframe that expands to 12 bytes passes the
+exception but `copy_frame_default` publishes 15 bytes. The three additional
+pixel bytes come from the untouched heap allocation. An ASan allocator-fill
+proof deterministically returns three `0xA5` bytes in the decoded AVFrame. The
+trajectory rejected an initial false LZO-overflow theory and then isolated this
+short-output mechanism, but did not promote it through the formal proof gate.
+
+The durable artifacts are
+`evaluations/ffmpeg_cscd_short_output_disclosure_reproducer.c` and
+`evaluations/run_ffmpeg_cscd_short_output_disclosure_reproducer.py`. The
+ignored proof record is
+`results/sourcehunt-optimization/cscd-short-output-disclosure-reproducer.json`;
+it records `expected_observed=true` at pinned FFmpeg commit
+`795bccdaf57772b1803914dee2f32d52776518e2`.
+
+The remaining terminal leads close under concrete contracts. NotchLC's
+16-bit delta and ring cursor keep both history indices in the 64 KiB window,
+and the cursor resets on the exact byte that reaches the boundary. VVC caps
+both overridden and default active-reference counts at 15, matching its weight
+arrays. FLAC constrains LPC order to the current residual partition, which is
+no larger than the validated block size. H.264 verifies the complete intra-PCM
+bit count after validating chroma format and bit depth. MPEG-4 AC buffers share
+the validated macroblock geometry, while MPEG audio's synthesis offset remains
+a multiple of 32 with a maximum of 480, making its 1024-element wrap copy
+exact. VAAPI VP8's frame-header check implies the hardware header subtraction
+cannot underflow. ProRes RAW invokes the Vulkan slice callback exactly once per
+allocated tile, and HEVC validates the active SPS identifier before storing it.
+The MIPS DSP paths consume fixed codec blocks backed by padded frames. Pulse
+rejects reads larger than the packet remainder; libplacebo creates exactly one
+filter pad and one private input object per configured input; and APNG chunk
+spans remain inside the validated packet. AMF extradata comes from the
+external encoder's small SPS/PPS buffer. Hash, file-open, CAVS, RoQ, CSCD's
+bounded decompressor writes, and the remaining filter/codec paths likewise
+retain their API, array, allocation, or producer invariants.
+
+The already-confirmed PCM-DVD short-final-frame root appeared in this rank
+window, but its trajectory terminated as a degenerate loop after 28 source
+steps without generating a candidate. This is retained as optimization
+evidence and does not add a duplicate survivor.
+
+The CamStudio file had no prior survivor entry, so the root is novel. Current
+totals are 56 confirmed root causes and 47 dynamically reproduced issues.
+Coverage is 1,044/4,995 (20.90%), with 3,951 historically ranked files
+remaining.
+
+Directly slicing this machine's unchanged 4,995-file deterministic order
+reproduces ranks 1021–1044 and their committed manifest and SHA-256 exactly.
+The next unchanged exact-path manifest seals ranks 1045–1068 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1045_1068.json` with SHA-256
+`606cd6d6abf898b363bf813a88c1417f8b60b67669d66352f29efde1db6a9f44`.

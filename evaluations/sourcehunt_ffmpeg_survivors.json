@@ -2016,5 +2016,86 @@
         "end": 596
       }
     ]
+  },
+  {
+    "case_id": "cscd-short-output-disclosure",
+    "finding": {
+      "id": "ffmpeg-cscd-short-output-disclosure",
+      "finding_type": "information_disclosure",
+      "cwe": "CWE-200",
+      "file": "libavcodec/cscd.c",
+      "line_number": 98,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "The CamStudio decoder intentionally accepts a legacy short decompression length for widths not divisible by four, but its output copy still uses the full visible row width and aligned stride. For a public 5x1 BGR24 context, the private buffer has 16 bytes and bugdelta is four. A valid zlib keyframe that expands to 12 bytes therefore passes the length guard, after which copy_frame_default copies 15 bytes into the returned pixel row. An ASan allocator-fill public decoder proof deterministically returns the three untouched 0xA5 heap bytes as decoded pixels.",
+      "code_snippet": "if (... || (dlen != c->decomp_size && dlen != c->decomp_size - bugdelta)) return AVERROR_INVALIDDATA; ... memcpy(dst, src, linelen);",
+      "poc": "Build and run evaluations/ffmpeg_cscd_short_output_disclosure_reproducer.c with evaluations/run_ffmpeg_cscd_short_output_disclosure_reproducer.py against the configured pinned checkout.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a valid short zlib keyframe passes the legacy-length exception, leaves the end of the decoder allocation untouched, and publishes three stale heap bytes as visible pixels",
+        "steps": [
+          {
+            "file": "libavcodec/cscd.c",
+            "line": 148,
+            "function": "decode_init",
+            "code_snippet": "c->linelen = avctx->width * avctx->bits_per_coded_sample / 8; ... c->decomp_size = c->height * stride;",
+            "note": "The public 5x1 BGR24 configuration produces a 15-byte visible row, a 16-byte aligned stride, and a 16-byte decompression size."
+          },
+          {
+            "file": "libavcodec/cscd.c",
+            "line": 152,
+            "function": "decode_init",
+            "code_snippet": "c->decomp_buf = av_malloc(c->decomp_size + AV_LZO_OUTPUT_PADDING);",
+            "note": "The decompression allocation is not initialized before attacker-controlled compressed data is decoded into it."
+          },
+          {
+            "file": "libavcodec/cscd.c",
+            "line": 74,
+            "function": "decode_frame",
+            "code_snippet": "int bugdelta = FFALIGN(avctx->width * bpp, 4) * avctx->height - (avctx->width & ~3) * bpp * avctx->height;",
+            "note": "For width five, three bytes per pixel, and one row, bugdelta is four."
+          },
+          {
+            "file": "libavcodec/cscd.c",
+            "line": 98,
+            "function": "decode_frame",
+            "code_snippet": "uncompress(c->decomp_buf, &dlen, ...) != Z_OK || (dlen != c->decomp_size && dlen != c->decomp_size - bugdelta)",
+            "note": "A valid zlib stream that emits 12 bytes satisfies decomp_size minus bugdelta and leaves bytes 12 through 15 untouched."
+          },
+          {
+            "file": "libavcodec/cscd.c",
+            "line": 117,
+            "function": "decode_frame",
+            "code_snippet": "copy_frame_default(c->pic, c->decomp_buf, c->linelen, c->height);",
+            "note": "Setting the public keyframe bit routes the accepted short output to the unconditional frame-copy helper."
+          },
+          {
+            "file": "libavcodec/cscd.c",
+            "line": 46,
+            "function": "copy_frame_default",
+            "code_snippet": "memcpy(dst, src, linelen);",
+            "note": "The single output row copies 15 bytes although zlib initialized only 12; the proof observes the remaining three ASan allocator-fill bytes in the returned AVFrame."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/cscd.c",
+        "start": 32,
+        "end": 64
+      },
+      {
+        "path": "libavcodec/cscd.c",
+        "start": 66,
+        "end": 130
+      },
+      {
+        "path": "libavcodec/cscd.c",
+        "start": 133,
+        "end": 160
+      }
+    ]
   }
 ]
