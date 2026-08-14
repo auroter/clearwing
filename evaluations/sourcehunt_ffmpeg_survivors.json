@@ -1383,5 +1383,125 @@
       {"path": "libavfilter/vf_readvitc.c", "start": 82, "end": 130},
       {"path": "libavfilter/vf_readvitc.c", "start": 155, "end": 220}
     ]
+  },
+  {
+    "case_id": "rtp-amr-zero-length-packet-oob-read",
+    "finding": {
+      "id": "ffmpeg-rtp-amr-zero-length-packet-oob-read",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavformat/rtpenc_amr.c",
+      "line_number": 65,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The public RTP muxer accepts a refcounted zero-length AMR-NB AVPacket and dispatches it to ff_rtp_send_amr without a minimum-size check. The packetizer unconditionally reads buff[0], advances the pointer, decrements size from zero to -1, and passes that negative int to memcpy as a size_t. A public AVFormatContext with ordinary custom packet I/O deterministically makes ASan abort in ff_rtp_send_amr with negative-size-param at the memcpy; the trace records the complete one-byte minimum allocation backing the zero-sized AVBufferRef.",
+      "code_snippet": "s->buf[1 + s->num_frames++] = buff[0] & 0x7C; buff++; size--; memcpy(s->buf_ptr, buff, size);",
+      "poc": "Build FFmpeg with the RTP muxer under ASan, then run evaluations/run_ffmpeg_rtp_amr_zero_length_reproducer.py against the configured static libraries.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a zero-length public AMR packet reaches a packetizer that assumes a one-byte frame header, underflows the remaining size, and forwards the negative length to memcpy",
+        "steps": [
+          {"file": "libavformat/rtpenc.c", "line": 605, "function": "rtp_write_packet", "code_snippet": "case AV_CODEC_ID_AMR_NB: case AV_CODEC_ID_AMR_WB: ff_rtp_send_amr(s1, pkt->data, size);", "note": "The public RTP write callback dispatches AMR packets without rejecting pkt->size equal to zero."},
+          {"file": "libavformat/rtpenc_amr.c", "line": 65, "function": "ff_rtp_send_amr", "code_snippet": "s->buf[1 + s->num_frames++] = buff[0] & 0x7C;", "note": "The packetizer unconditionally consumes the absent first AMR frame-header byte."},
+          {"file": "libavformat/rtpenc_amr.c", "line": 67, "function": "ff_rtp_send_amr", "code_snippet": "size--;", "note": "The signed packet size changes from zero to -1."},
+          {"file": "libavformat/rtpenc_amr.c", "line": 68, "function": "ff_rtp_send_amr", "code_snippet": "memcpy(s->buf_ptr, buff, size);", "note": "Implicit conversion forwards -1 as an enormous copy length; ASan reports negative-size-param and aborts on the public muxer path."}
+        ]
+      }
+    },
+    "windows": [
+      {"path": "libavformat/rtpenc.c", "start": 550, "end": 615},
+      {"path": "libavformat/rtpenc_amr.c", "start": 28, "end": 70}
+    ]
+  },
+  {
+    "case_id": "pcm-dvd-small-last-frame-oob-read",
+    "finding": {
+      "id": "ffmpeg-pcm-dvd-small-last-frame-oob-read",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavcodec/pcm-dvdenc.c",
+      "line_number": 158,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The PCM-DVD encoder advertises AV_CODEC_CAP_SMALL_LAST_FRAME, but its S32 block encoder does not reject final frames shorter than samples_per_block. For 5.1 S32 input, one sample per channel is a valid public final frame with six supplied int32_t values. Integer division produces a three-byte header-only packet and blocks equal to zero, yet the do-while body enters and its six groups attempt to consume a complete 24-sample block. An exact 24-byte AVFrame allocation makes ASan report a four-byte heap-buffer-overflow read at src32[2] in the second group. The durable build disables optimization and the forced-inline attribute, without changing FFmpeg source, so the C-required helper arguments remain observable to ASan instead of the undefined path being optimized into a nonterminating loop.",
+      "code_snippet": "int blocks = (pkt_size - 3) / s->block_size; do { for (int i = s->groups_per_block; i; i--) { bytestream2_put_be16(&pb, src32[2] >> 16); ... } } while (--blocks);",
+      "poc": "Configure FFmpeg under ASan with --disable-optimizations and -Dav_always_inline=, enable the PCM-DVD encoder, and run evaluations/run_ffmpeg_pcm_dvd_small_last_frame_reproducer.py.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "the small-last-frame contract admits fewer than four samples per channel, integer block calculation becomes zero, and a do-while encoder body nevertheless reads a complete interleaved S32 block",
+        "steps": [
+          {"file": "libavcodec/pcm-dvdenc.c", "line": 93, "function": "pcm_dvd_encode_init", "code_snippet": "s->samples_per_block = 4; s->groups_per_block = avctx->ch_layout.nb_channels;", "note": "Five-point-one S32 input requires six four-sample groups, or 24 interleaved samples, per encoded block."},
+          {"file": "libavcodec/pcm-dvdenc.c", "line": 180, "function": "ff_pcm_dvd_encoder", "code_snippet": ".p.capabilities = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_SMALL_LAST_FRAME", "note": "The public encoder contract permits a final frame shorter than its nominal frame_size."},
+          {"file": "libavcodec/pcm-dvdenc.c", "line": 120, "function": "pcm_dvd_encode_frame", "code_snippet": "int64_t pkt_size = (int64_t)(frame->nb_samples / s->samples_per_block) * s->block_size + 3;", "note": "For nb_samples one and samples_per_block four, pkt_size is only the three-byte header and blocks becomes zero."},
+          {"file": "libavcodec/pcm-dvdenc.c", "line": 154, "function": "pcm_dvd_encode_frame", "code_snippet": "do { for (int i = s->groups_per_block; i; i--) {", "note": "The do-while executes once despite blocks starting at zero and begins consuming all six groups."},
+          {"file": "libavcodec/pcm-dvdenc.c", "line": 158, "function": "pcm_dvd_encode_frame", "code_snippet": "bytestream2_put_be16(&pb, src32[2] >> 16);", "note": "The second group indexes immediately beyond the six-sample, 24-byte frame allocation; ASan reports a four-byte read at the allocation boundary."}
+        ]
+      }
+    },
+    "windows": [
+      {"path": "libavcodec/pcm-dvdenc.c", "start": 45, "end": 112},
+      {"path": "libavcodec/pcm-dvdenc.c", "start": 115, "end": 189}
+    ]
+  },
+  {
+    "case_id": "chorus-excess-speed-zero-lookup-oob-read",
+    "finding": {
+      "id": "ffmpeg-chorus-excess-speed-zero-lookup-oob-read",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavfilter/af_chorus.c",
+      "line_number": 242,
+      "severity": "low",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The chorus filter parses modulation speeds from an unrestricted string list and does not require each speed to be no greater than the negotiated sample rate. At 48 kHz with speed 96,000, integer conversion sets length[0] to zero and allocates a zero-element lookup table. Processing one ordinary audio sample then reads lookup_table[0][phase[0]], where phase starts at zero. A public abuffer-to-chorus-to-abuffersink graph makes ASan report a four-byte heap-buffer-overflow read at the one-byte minimum allocation backing that empty table.",
+      "code_snippet": "s->length[n] = outlink->sample_rate / s->speeds[n]; s->lookup_table[n] = av_malloc(sizeof(int32_t) * s->length[n]); ... s->lookup_table[n][phase[n]]",
+      "poc": "Build FFmpeg with the chorus filter under ASan, then run evaluations/run_ffmpeg_chorus_speed_reproducer.py against the configured static libraries.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "an unrestricted chorus speed above the sample rate truncates the modulation table length to zero before ordinary sample processing indexes its first element",
+        "steps": [
+          {"file": "libavfilter/af_chorus.c", "line": 132, "function": "init", "code_snippet": "fill_items(s->speeds_str, &nb_speeds, s->speeds);", "note": "The public string parser accepts finite positive modulation speeds without a sample-rate-relative upper bound."},
+          {"file": "libavfilter/af_chorus.c", "line": 171, "function": "config_output", "code_snippet": "s->length[n] = outlink->sample_rate / s->speeds[n];", "note": "A speed of 96,000 at a 48-kHz sample rate converts to integer length zero."},
+          {"file": "libavfilter/af_chorus.c", "line": 173, "function": "config_output", "code_snippet": "s->lookup_table[n] = av_malloc(sizeof(int32_t) * s->length[n]);", "note": "Configuration allocates storage for zero int32_t table elements and continues."},
+          {"file": "libavfilter/af_chorus.c", "line": 242, "function": "filter_frame", "code_snippet": "s->lookup_table[n][phase[n]]", "note": "The first audio sample reads index zero from the empty table; ASan reports a four-byte heap-buffer-overflow."}
+        ]
+      }
+    },
+    "windows": [
+      {"path": "libavfilter/af_chorus.c", "start": 75, "end": 180},
+      {"path": "libavfilter/af_chorus.c", "start": 210, "end": 260}
+    ]
+  },
+  {
+    "case_id": "chorus-mismatched-list-count-oob-read",
+    "finding": {
+      "id": "ffmpeg-chorus-mismatched-list-count-oob-read",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavfilter/af_chorus.c",
+      "line_number": 171,
+      "severity": "low",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The chorus filter intends to require equal delay, decay, speed, and depth list lengths, but combines the three inequality tests with logical AND. If any one list length equals the delay count, every other mismatch is accepted. num_chorus is then set from the delay count and output configuration indexes every independently allocated option array to that count. Supplying two delays, two decays, one speed, and two depths through a public filter graph therefore reads speeds[1] immediately beyond its one-float allocation. ASan reports a four-byte heap-buffer-overflow during avfilter_graph_config.",
+      "code_snippet": "if (nb_delays != nb_decays && nb_delays != nb_speeds && nb_delays != nb_depths) ... s->num_chorus = nb_delays; ... s->speeds[n]",
+      "poc": "Build FFmpeg with the chorus filter under ASan, then run evaluations/run_ffmpeg_chorus_mismatched_lists_reproducer.py against the configured static libraries.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a conjunctive list-count check accepts partially matching chorus arrays, then iteration bounded by the delay count reads beyond a shorter speed allocation",
+        "steps": [
+          {"file": "libavfilter/af_chorus.c", "line": 122, "function": "init", "code_snippet": "s->delays = av_realloc_f(... nb_delays ...); ... s->speeds = av_realloc_f(... nb_speeds ...);", "note": "Each option array is allocated to its own parsed count; one supplied speed produces exactly one float of speed storage."},
+          {"file": "libavfilter/af_chorus.c", "line": 135, "function": "init", "code_snippet": "if (nb_delays != nb_decays && nb_delays != nb_speeds && nb_delays != nb_depths)", "note": "Two matching delay/decay entries make the full conjunction false even though the speed count is one."},
+          {"file": "libavfilter/af_chorus.c", "line": 140, "function": "init", "code_snippet": "s->num_chorus = nb_delays;", "note": "Subsequent iteration is bounded by the two-delay count, not by the shortest accepted list."},
+          {"file": "libavfilter/af_chorus.c", "line": 171, "function": "config_output", "code_snippet": "s->length[n] = outlink->sample_rate / s->speeds[n];", "note": "At n equal to one, graph configuration reads immediately after the one-float speed allocation; ASan aborts at this line."}
+        ]
+      }
+    },
+    "windows": [
+      {"path": "libavfilter/af_chorus.c", "start": 75, "end": 180}
+    ]
   }
 ]

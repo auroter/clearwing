@@ -1961,3 +1961,69 @@ reproduces ranks 853–876 and their committed manifest and SHA-256 exactly. The
 next unchanged exact-path manifest seals ranks 877–900 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_0877_0900.json` with SHA-256
 `820bf185f4049c468b6fa0a8b43d015a0f90eb10afec1ee63ad427fa7d4427b0`.
+
+### Blind wave 877–900 and four public-path audio roots
+
+The unchanged treatment completed all 24 exact-path trajectories with a
+successful source-bearing action. It used 9,532,624 tokens over 953 model
+calls, made 191 candidate/finding calls, performed 30 automatic context
+compactions, and submitted no formal findings. There were no endpoint,
+reporting, or native-tool failures.
+
+Offline review found four novel roots in three files. The hunter's proposed
+RTP/AMR payload-overflow arithmetic was false, but `rtpenc_amr.c` has a simpler
+public boundary failure: a zero-length AMR `AVPacket` reaches
+`ff_rtp_send_amr`, which reads `buff[0]`, advances the pointer, decrements
+`size` to -1, and passes that value to `memcpy`. A public RTP output context
+with custom packet I/O makes ASan abort at the copy with
+`negative-size-param`.
+
+The proposed PCM-DVD group-size arithmetic was likewise false: each group
+writes 12 bytes as intended. The independent root is the encoder's advertised
+`AV_CODEC_CAP_SMALL_LAST_FRAME` contract. For interleaved S32 5.1 input,
+`nb_samples=1` supplies six samples, while division by the four-sample block
+size makes `blocks` zero. The `do ... while` still enters and attempts the
+complete six-group, 24-sample block. An exact 24-byte input frame makes ASan
+report a four-byte read immediately beyond the allocation. The durable ASan
+build disables optimization and the forced-inline attribute without changing
+source, preserving C argument evaluation that an optimized undefined path can
+otherwise transform into a nonterminating loop.
+
+`af_chorus.c` contains two distinct configuration roots. A modulation speed
+above the negotiated sample rate truncates `length[n]` to zero; processing one
+sample then reads the empty lookup table at index zero. Separately, the option
+list count check combines mismatches with `&&`, so two delays, two decays, one
+speed, and two depths are accepted before output configuration reads
+`speeds[1]`. Public `abuffer -> chorus -> abuffersink` graphs reproduce both
+four-byte heap-buffer-overflow reads under ASan.
+
+The durable artifacts are
+`evaluations/ffmpeg_rtp_amr_zero_length_reproducer.c`,
+`evaluations/run_ffmpeg_rtp_amr_zero_length_reproducer.py`,
+`evaluations/ffmpeg_pcm_dvd_small_last_frame_reproducer.c`,
+`evaluations/run_ffmpeg_pcm_dvd_small_last_frame_reproducer.py`,
+`evaluations/ffmpeg_chorus_speed_reproducer.c`,
+`evaluations/run_ffmpeg_chorus_speed_reproducer.py`,
+`evaluations/ffmpeg_chorus_mismatched_lists_reproducer.c`, and
+`evaluations/run_ffmpeg_chorus_mismatched_lists_reproducer.py`.
+
+The other terminal leads resolve to concrete contracts. Decoder `get_buffer2`
+alignment physically covers H.274's partial 8x8 processing. JPEG2000 dimensions,
+DSS combinatorial indices, HTML subtitle scanning, AMR depacketization, XWMA,
+bprint, cellauto, XFace, libxavs2, QSV, KGV1, PNM, CAVS block allocation, HEVC
+profile validation, BRSTM, and WMA remain within their validated allocation or
+producer bounds. Broader reviews of AVUI, avectorscope, and sinc found no
+independent violated memory-safety invariant.
+
+Only after adjudication and all four public-path reproductions completed was
+the wave compared with the sealed survivor set. None of the three files had a
+prior survivor, so the four roots are novel rather than rediscoveries. Current
+totals are 46 confirmed root causes and 40 dynamically reproduced issues.
+Coverage is 900/4,995 (18.02%), with 4,095 historically ranked files
+remaining.
+
+Directly slicing this machine's unchanged 4,993-file deterministic order
+reproduces ranks 877–900 and their committed manifest and SHA-256 exactly. The
+next unchanged exact-path manifest seals ranks 901–924 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_0901_0924.json` with SHA-256
+`9d283f5847e43c2534c816a607bbf19065d43d1027c3e6d13025d76af41dfa0b`.
