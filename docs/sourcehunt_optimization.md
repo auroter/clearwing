@@ -2237,3 +2237,47 @@ that the false top-left match is gated through `deblocking_filter == 2`, and
 that the resulting `top_borders[...][mb_x - 1]` pointer reaches luma and chroma
 `XCHG` writes at `mb_x == 0`. This post-hoc material was not supplied to any
 blind trajectory, ranking pass, or inference prompt.
+
+### Blind wave 973–996 and invariant-heavy closures
+
+The sealed run completed all 24 exact-path trajectories with a successful
+source-bearing action. It used 8,149,017 tokens over 891 model calls, made 224
+candidate/finding calls, performed 26 automatic context compactions, and
+produced zero accepted formal findings. The replacement inference endpoint
+completed the run without reporting failures.
+
+Offline review found no new confirmed root cause. The strongest table-index
+lead was in the ELS arithmetic decoder. A sanitizer-instrumented state probe
+confirmed that `ctx->j` can finish a decode call negative, reaching -17, but
+the source transition graph closes the apparent underflow: the only rungs with
+`ALps == -108` are 171 and 172, neither has an incoming transition, and the
+sole G2M/ePIC caller zero-initializes every rung. The reachable graph stopped at
+rung 170 in the targeted probe, so a negative `j` cannot combine with either
+dangerous table offset.
+
+The other terminal leads also close under concrete allocation or producer
+contracts. RPZA's rounded final 4x4 blocks are backed by the codec-specific
+four-pixel width and height alignment required by `avcodec_align_dimensions2`.
+RTP/JPEG marker lookahead remains inside packet padding, while its variable
+table payloads have explicit segment-span checks. VMNC cursor storage is exactly
+`cur_w * cur_h * bpp` and both screen copies clamp the visible rectangle before
+using frame linesizes. VAAPI H.264 rejects a full DPB before appending; NVDEC
+plane geometry follows the mapped CUDA frame and its HEVC path already enforces
+the hardware RPS capacities. TMV's packet consumption, font index, and frame
+writes match their exact dimensions. ASV tables, BlockDSP callers, compand's
+delay ring, IAMF OBU spans, quirc image storage, kvazaar chunks, packet side
+data, fixed AAC scaling, and the remaining codec/filter paths likewise retain
+their table, stride, allocation, library, or public-API invariants. The packet
+side-data aliasing theory requires caller ownership misuse, and an OpenCL kernel
+argument mismatch returns `CL_INVALID_ARG_INDEX` rather than writing through an
+invalid argument slot.
+
+No survivor entry was added. Current totals remain 54 confirmed root causes and
+45 dynamically reproduced issues. Coverage is 996/4,995 (19.94%), with 3,999
+historically ranked files remaining.
+
+Directly slicing this machine's unchanged 4,995-file deterministic order
+reproduces ranks 973–996 and their committed manifest and SHA-256 exactly. The
+next unchanged exact-path manifest seals ranks 997–1020 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_0997_1020.json` with SHA-256
+`80ee549f21a8845b0c65c8b2b5647b463554e2b3afb148d9903c5d3f0ec9199f`.
