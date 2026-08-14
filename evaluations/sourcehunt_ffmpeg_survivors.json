@@ -10,27 +10,34 @@
       "severity": "high",
       "confidence": "high",
       "evidence_level": "root_cause_explained",
-      "description": "The per-picture slice counter is an unbounded int, while decoded macroblock ownership is stored in a uint16_t slice table initialized to 0xFFFF. On slice 65535, storing slice_num aliases the unused-entry sentinel. Neighbor checks can then treat padded or uninitialized entries as members of the current slice, enabling the left-border exchange path at a row boundary to access top_borders at mb_x - 1.",
+      "description": "The per-picture slice counter is an unbounded int, while decoded macroblock ownership is stored in a uint16_t slice table initialized to 0xFFFF. On slice 65535, storing slice_num aliases the unused-entry sentinel. The picture initializer deliberately re-poisons the table's spare mb_stride column with that sentinel, so neighbor checks can treat padded entries as members of the current slice. With deblocking_filter == 2 at mb_x == 0, the false top-left match selects top_borders[top_idx][-1], one 96-byte macroblock record before the heap allocation, and the luma and chroma XCHG operations write through it. Later FFmpeg repair 6d57428858 rejects current_slice >= 0xFFFE before incrementing, independently confirming the exact collision boundary.",
       "code_snippet": "sl->slice_num = ++h->current_slice;",
-      "poc": "Decode one H.264 picture containing at least 65535 accepted slices so slice_num becomes 0xFFFF, then reach an intra macroblock at the left edge with the cross-slice deblock path active.",
+      "poc": "Decode one H.264 picture containing at least 65535 accepted slices so slice_num becomes 0xFFFF, then reach a left-edge macroblock with deblocking_filter == 2 and a padded top-left slice-table entry; the sentinel collision enables the top_borders[-1] luma/chroma exchanges.",
       "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
       "vulnerability_trace": {
-        "summary": "attacker-controlled slice count reaches a wider counter, truncates into the 16-bit ownership table as its 0xFFFF sentinel, and corrupts a neighbor-existence decision before a left-border exchange",
+        "summary": "attacker-controlled slice count reaches a wider counter, truncates into the 16-bit ownership table as its 0xFFFF sentinel, and corrupts a neighbor-existence decision before luma and chroma exchanges through a pointer one 96-byte record before top_borders",
         "steps": [
           {"file": "libavcodec/h264dec.c", "line": 210, "function": "ff_h264_alloc_tables", "code_snippet": "memset(h->slice_table_base, -1, st_size * sizeof(*h->slice_table_base));", "note": "The 16-bit table uses 0xFFFF for unavailable/padded entries."},
+          {"file": "libavcodec/h264dec.c", "line": 212, "function": "ff_h264_alloc_tables", "code_snippet": "h->slice_table = h->slice_table_base + h->mb_stride * 2 + 1;", "note": "The active table has leading guard rows and an mb_stride equal to mb_width + 1, leaving a spare padding column."},
+          {"file": "libavcodec/h264_slice.c", "line": 1629, "function": "h264_frame_start", "code_snippet": "memset(h->slice_table, -1, (h->mb_height * h->mb_stride - 1) * sizeof(*h->slice_table));", "note": "Every frame re-poisons the active table, including the spare per-row column, with the colliding 0xFFFF sentinel."},
           {"file": "libavcodec/h264_slice.c", "line": 1982, "function": "h264_slice_init", "code_snippet": "sl->slice_num = ++h->current_slice;", "note": "No terminating bound prevents slice_num from reaching 65535."},
           {"file": "libavcodec/h264_cabac.c", "line": 2033, "function": "decode_mb_cabac", "code_snippet": "h->slice_table[mb_xy] = sl->slice_num;", "note": "The int counter is stored into the uint16_t table."},
-          {"file": "libavcodec/h264_mb.c", "line": 532, "function": "xchg_mb_border", "code_snippet": "deblock_topleft = h->slice_table[sl->mb_xy - 1 - (h->mb_stride << MB_FIELD(sl))] == sl->slice_num;", "note": "At the collision, the unused sentinel compares equal to the current slice."},
-          {"file": "libavcodec/h264_mb.c", "line": 543, "function": "xchg_mb_border", "code_snippet": "top_border_m1 = sl->top_borders[top_idx][sl->mb_x - 1];", "note": "A falsely present top-left neighbor enables exchange through the left-border pointer."}
+          {"file": "libavcodec/h264_mvpred.h", "line": 557, "function": "fill_decode_neighbors", "code_snippet": "if (h->slice_table[topleft_xy] != sl->slice_num)", "note": "Six FMO/non-FMO comparisons use slice-table equality to decide whether top-left, top, left, and top-right neighbors exist; the collision reverses the intended unavailable-entry result."},
+          {"file": "libavcodec/h264_mb.c", "line": 532, "function": "xchg_mb_border", "code_snippet": "deblock_topleft = h->slice_table[sl->mb_xy - 1 - (h->mb_stride << MB_FIELD(sl))] == sl->slice_num;", "note": "Only the deblocking_filter == 2 branch consults the colliding entry; the alternative explicitly requires mb_x > 0."},
+          {"file": "libavcodec/h264_mb.c", "line": 543, "function": "xchg_mb_border", "code_snippet": "top_border_m1 = sl->top_borders[top_idx][sl->mb_x - 1];", "note": "At mb_x == 0 this forms a pointer one 96-byte top-border record before the allocation."},
+          {"file": "libavcodec/h264_mb.c", "line": 561, "function": "xchg_mb_border", "code_snippet": "XCHG(top_border_m1 + (8 << pixel_shift), src_y - (7 << pixel_shift), 1);", "note": "The falsely enabled luma exchange writes through the underflowed heap pointer; the 4:4:4 and non-4:4:4 chroma exchanges repeat the write at lines 573-574 and 586-587."}
         ]
       }
     },
     "windows": [
       {"path": "libavcodec/h264dec.h", "start": 395, "end": 505},
+      {"path": "libavcodec/h264dec.h", "start": 275, "end": 300},
       {"path": "libavcodec/h264dec.c", "start": 185, "end": 218},
+      {"path": "libavcodec/h264_slice.c", "start": 1615, "end": 1640},
       {"path": "libavcodec/h264_slice.c", "start": 1965, "end": 2005},
       {"path": "libavcodec/h264_cabac.c", "start": 2018, "end": 2040},
-      {"path": "libavcodec/h264_mb.c", "start": 509, "end": 585}
+      {"path": "libavcodec/h264_mvpred.h", "start": 545, "end": 574},
+      {"path": "libavcodec/h264_mb.c", "start": 509, "end": 594}
     ]
   },
   {
@@ -1267,19 +1274,24 @@
       "severity": "high",
       "confidence": "high",
       "evidence_level": "root_cause_explained",
-      "description": "The common D3D12VA decoder allocates its fixed upload resource from the decoded frame's raw-image buffer size, but the H.264 and HEVC backends copy every accepted VCL NAL into that mapped resource and prepend three bytes per slice without checking the resulting byte count. Compressed-picture size is not bounded by decoded-image size. The durable proof generates a standards-valid, normally decodable 16x5400 yuv420p H.264 Baseline stream whose slice bytes plus inserted prefixes exceed both the resource's 129,600-byte declared width and its 131,072-byte 64 KiB-aligned allocation floor. A valid 16x16 HEVC Main stream independently exceeds its 384-byte declared resource width. The exact byte counts are deterministically recorded by the proof script and can vary slightly with the installed encoder build. The duplicated write paths and resource-size policy are byte-identical in both sealed snapshots; no Windows D3D12 runtime was available, so the overflow is retained as source- and producer-confirmed rather than sanitizer-observed.",
+      "description": "The common D3D12VA decoder allocates its fixed upload resource from the decoded frame's raw-image buffer size, but the H.264, HEVC, VC-1, and AV1 backends copy accepted compressed frame data into that mapped resource without checking the resulting byte count. Compressed-picture size is not bounded by decoded-image size. H.264 and HEVC additionally prepend three bytes per slice, VC-1 can prepend four-byte start codes, and AV1 can first accumulate partial tile groups into a separate heap buffer with the same raw-image-sized capacity before copying the unbounded total into the resource. The durable proof generates a standards-valid, normally decodable 16x5400 yuv420p H.264 Baseline stream whose slice bytes plus inserted prefixes exceed both the resource's 129,600-byte declared width and its 131,072-byte 64 KiB-aligned allocation floor. A valid 16x16 HEVC Main stream independently exceeds its 384-byte declared resource width. Later FFmpeg repairs add the missing capacity checks to the VC-1 mapped copy and to both AV1 accumulation and final-frame copy paths, independently confirming those variants. The exact H.264 and HEVC byte counts are deterministically recorded by the proof script and can vary slightly with the installed encoder build. No Windows D3D12 runtime was available, so the root is retained as source-, producer-, and repair-confirmed rather than sanitizer-observed.",
       "code_snippet": "*(uint32_t *)mapped_ptr = START_CODE; mapped_ptr += START_CODE_SIZE; memcpy(mapped_ptr, &ctx_pic->bitstream[position], size);",
-      "poc": "Run evaluations/run_ffmpeg_d3d12va_upload_capacity_proof.py for either sealed checkout. It creates valid H.264 and HEVC streams, confirms software decoding, and records the exact VCL bytes that the D3D12 callbacks copy versus the common upload-resource capacity.",
+      "poc": "Run evaluations/run_ffmpeg_d3d12va_upload_capacity_proof.py for either sealed checkout. It creates valid H.264 and HEVC streams, confirms software decoding, and records the exact VCL bytes that the D3D12 callbacks copy versus the common upload-resource capacity. Inspect later FFmpeg repairs 1307db3d3c, e1ef95c779, and a90fbb6bc9 for the equivalent missing VC-1 frame, AV1 frame, and AV1 slice-buffer bounds.",
       "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
       "vulnerability_trace": {
-        "summary": "valid H.264 or HEVC slice NALs can exceed a raw-image-sized upload allocation, after which the D3D12 backend adds per-slice start codes and performs unchecked mapped writes",
+        "summary": "valid compressed H.264, HEVC, VC-1, or AV1 frame data can exceed a raw-image-sized D3D12 upload allocation; codec-specific paths then perform unchecked mapped writes, and AV1 also has an unchecked intermediate accumulation buffer",
         "steps": [
           {"file": "libavcodec/d3d12va_decode.c", "line": 141, "function": "ff_d3d12va_get_suitable_max_bitstream_size", "code_snippet": "return av_image_get_buffer_size(frames_ctx->sw_format, avctx->coded_width, avctx->coded_height, 1);", "note": "Upload capacity is derived from decoded pixel storage, not from the actual compressed access-unit size."},
           {"file": "libavcodec/d3d12va_decode.c", "line": 192, "function": "d3d12va_get_valid_helper_objects", "code_snippet": ".Width = ctx->bitstream_size", "note": "Every helper upload resource has exactly that fixed capacity."},
           {"file": "libavcodec/h264dec.c", "line": 673, "function": "decode_nal_units", "code_snippet": "FF_HW_CALL(avctx, decode_slice, nal->raw_data, nal->raw_size)", "note": "Accepted packet-controlled H.264 VCL NAL bytes reach the hardware callback unchanged; the valid proof stream exceeds the 129,600-byte resource width and the 131,072-byte allocation-alignment floor."},
           {"file": "libavcodec/hevc/hevcdec.c", "line": 3049, "function": "decode_slice_data", "code_snippet": "FF_HW_CALL(s->avctx, decode_slice, nal->raw_data, nal->raw_size)", "note": "The HEVC hardware path has the same producer chain; the valid 16x16 proof stream exceeds the 384-byte declared resource width."},
           {"file": "libavcodec/d3d12va_h264.c", "line": 133, "function": "update_input_arguments", "code_snippet": "*(uint32_t *)mapped_ptr = START_CODE; mapped_ptr += 3; memcpy(mapped_ptr, &ctx_pic->bitstream[position], size);", "note": "H.264 writes three new prefix bytes per slice plus every slice byte without comparing mapped_ptr against resource capacity; the durable record preserves the exact excess for the local encoder build."},
-          {"file": "libavcodec/d3d12va_hevc.c", "line": 129, "function": "update_input_arguments", "code_snippet": "*(uint32_t *)mapped_ptr = START_CODE; mapped_ptr += 3; memcpy(mapped_ptr, &ctx_pic->bitstream[position], size);", "note": "The independently duplicated HEVC loop performs the same unchecked mapped write."}
+          {"file": "libavcodec/d3d12va_hevc.c", "line": 129, "function": "update_input_arguments", "code_snippet": "*(uint32_t *)mapped_ptr = START_CODE; mapped_ptr += 3; memcpy(mapped_ptr, &ctx_pic->bitstream[position], size);", "note": "The independently duplicated HEVC loop performs the same unchecked mapped write."},
+          {"file": "libavcodec/d3d12va_vc1.c", "line": 125, "function": "update_input_arguments", "code_snippet": "memcpy(mapped_ptr, start_code, sizeof(start_code));", "note": "VC-1 can add a four-byte start code for each slice without checking the remaining mapped-resource capacity."},
+          {"file": "libavcodec/d3d12va_vc1.c", "line": 135, "function": "update_input_arguments", "code_snippet": "memcpy(mapped_ptr, &ctx_pic->bitstream[position], size);", "note": "The slice copy is likewise unchecked; later repair 1307db3d3c adds a remaining-capacity comparison covering both writes."},
+          {"file": "libavcodec/d3d12va_av1.c", "line": 95, "function": "d3d12va_av1_decode_slice", "code_snippet": "memcpy(ctx_pic->bitstream + ctx_pic->bitstream_size, buffer, size);", "note": "Partial AV1 tile groups accumulate into a raw-image-sized heap buffer without bounding the prior total plus the new slice; later repair a90fbb6bc9 adds that exact check."},
+          {"file": "libavcodec/d3d12va_av1.c", "line": 135, "function": "update_input_arguments", "code_snippet": "memcpy(mapped_data, ctx_pic->bitstream, ctx_pic->bitstream_size);", "note": "The completed AV1 frame is copied to the equally fixed D3D12 resource without a capacity comparison; later repair e1ef95c779 adds it."},
+          {"file": "libavcodec/d3d12va_av1.c", "line": 177, "function": "d3d12va_av1_decode_init", "code_snippet": "av1_ctx->bitstream_buffer = av_malloc(ff_d3d12va_get_suitable_max_bitstream_size(avctx));", "note": "The AV1 accumulation allocation uses the same decoded-image-derived capacity as the upload resource."}
         ]
       }
     },
@@ -1288,6 +1300,8 @@
       {"path": "libavcodec/d3d12va_decode.c", "start": 405, "end": 432},
       {"path": "libavcodec/d3d12va_h264.c", "start": 75, "end": 155},
       {"path": "libavcodec/d3d12va_hevc.c", "start": 74, "end": 150},
+      {"path": "libavcodec/d3d12va_vc1.c", "start": 70, "end": 152},
+      {"path": "libavcodec/d3d12va_av1.c", "start": 70, "end": 183},
       {"path": "libavcodec/h264dec.c", "start": 645, "end": 680},
       {"path": "libavcodec/hevc/hevcdec.c", "start": 3032, "end": 3053}
     ]
@@ -2176,6 +2190,73 @@
         "path": "libavformat/iamf_writer.c",
         "start": 1228,
         "end": 1253
+      }
+    ]
+  },
+  {
+    "case_id": "blurdetect-chroma-block-array-overflow",
+    "finding": {
+      "id": "ffmpeg-blurdetect-chroma-block-array-overflow",
+      "finding_type": "out_of_bounds_write",
+      "cwe": "CWE-787",
+      "file": "libavfilter/vf_blurdetect.c",
+      "line_number": 232,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The blurdetect filter allocates its float block-score array from floor-divided full-resolution luma geometry, but processes each selected plane using independently ceil-subsampled plane and block dimensions. For a 19x19 YUV420P frame with 10x10 configured blocks, the allocation contains one float while the 10x10 chroma plane is processed as four 5x5 blocks. Edge-bearing chroma makes calculate_blur append scores through an unchecked blks[blkcnt] index. Running the production filter under ASan records a four-byte heap-buffer-overflow write immediately after the four-byte allocation.",
+      "code_snippet": "s->blks = av_calloc((inlink->w / s->block_width) * (inlink->h / s->block_height), sizeof(*s->blks)); ... blks[blkcnt] = block_total_width / block_count;",
+      "poc": "Run evaluations/run_ffmpeg_blurdetect_chroma_blocks_reproducer.py against the configured pinned ASan checkout; it invokes the production filter with a 19x19 edge-bearing YUV420P chroma plane and records the allocator and write evidence.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "floor-divided luma block geometry underallocates the shared score array for ceil-subsampled chroma geometry, after which an edge-bearing chroma plane appends multiple float scores out of bounds",
+        "steps": [
+          {
+            "file": "libavfilter/vf_blurdetect.c",
+            "line": 117,
+            "function": "blurdetect_config_input",
+            "code_snippet": "s->blks = av_calloc((inlink->w / s->block_width) * (inlink->h / s->block_height), sizeof(*s->blks));",
+            "note": "For a 19x19 frame and 10x10 configured blocks, floor division allocates exactly one four-byte score entry."
+          },
+          {
+            "file": "libavfilter/vf_blurdetect.c",
+            "line": 278,
+            "function": "blurdetect_filter_frame",
+            "code_snippet": "int w = AV_CEIL_RSHIFT(inw, hsub); int h = AV_CEIL_RSHIFT(inh, vsub);",
+            "note": "The selected YUV420P chroma plane independently rounds 19x19 up to 10x10 rather than using the allocation's floor-divided luma count."
+          },
+          {
+            "file": "libavfilter/vf_blurdetect.c",
+            "line": 205,
+            "function": "calculate_blur",
+            "code_snippet": "int block_width = AV_CEIL_RSHIFT(s->block_width, hsub); int block_height = AV_CEIL_RSHIFT(s->block_height, vsub);",
+            "note": "The configured 10x10 block independently rounds to 5x5 for chroma, so the 10x10 plane has two block rows and two block columns."
+          },
+          {
+            "file": "libavfilter/vf_blurdetect.c",
+            "line": 232,
+            "function": "calculate_blur",
+            "code_snippet": "blks[blkcnt] = block_total_width / block_count;",
+            "note": "No capacity comparison guards the per-edge-block append; ASan observes a four-byte write immediately after the single-float allocation."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/vf_blurdetect.c",
+        "start": 96,
+        "end": 124
+      },
+      {
+        "path": "libavfilter/vf_blurdetect.c",
+        "start": 193,
+        "end": 245
+      },
+      {
+        "path": "libavfilter/vf_blurdetect.c",
+        "start": 255,
+        "end": 306
       }
     ]
   }

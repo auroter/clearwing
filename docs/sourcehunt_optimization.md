@@ -2514,3 +2514,72 @@ reproduces ranks 1069–1092 and their committed manifest and SHA-256 exactly. T
 next unchanged exact-path manifest seals ranks 1093–1116 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1093_1116.json` with SHA-256
 `bfba488d4b1e361f292be4ea5ba086a63d3ce265298f5e04a08fe3874fb01da2`.
+
+### Blind wave 1093–1116 and a blurdetect chroma heap overflow
+
+The sealed campaign covers all 24 exact paths. Ten already-terminal
+trajectories were reused from the first retry, and exactly 14 unfinished paths
+were replayed to completion in
+`results/sourcehunt-optimization/ffmpeg-blind-campaign-ranks-1093-1116-retry2/`
+under session `blind-pinned-files-n0014-8da0f664`. The replay used 4,851,743
+tokens over 542 model calls, made 140 candidate/finding calls, performed 21
+automatic context compactions, and had no failed settlements or accepted formal
+findings. Combined with the reused trajectories, the complete wave used
+7,810,929 tokens over 863 calls, made 214 candidate/finding calls, and performed
+31 compactions. The replacement inference endpoint completed the replay without
+reporting failures.
+
+Offline review confirmed one novel root in `vf_blurdetect`. Its shared float
+block-score array is allocated from floor-divided full-resolution geometry, but
+each selected plane independently ceil-subsamples both the plane and configured
+block dimensions. For a 19x19 YUV420P frame with 10x10 blocks, the allocation
+contains one float while the 10x10 chroma plane is processed as four 5x5 blocks.
+Edge-bearing chroma therefore appends scores past the allocation through the
+unchecked `blks[blkcnt]` write. Running the production filter under ASan reports
+a four-byte heap-buffer-overflow write immediately after the four-byte
+allocation. The blind trajectory found the allocation/write pair but rejected
+it after considering only full-resolution division; cross-plane refinement in
+offline review exposed the reachable mismatched geometry.
+
+The durable reproducer is
+`evaluations/run_ffmpeg_blurdetect_chroma_blocks_reproducer.py`. The ignored
+proof record is
+`results/sourcehunt-optimization/blurdetect-chroma-blocks-reproducer.json`; it
+records `expected_observed=true` at pinned FFmpeg commit
+`795bccdaf57772b1803914dee2f32d52776518e2`.
+
+Review also extended the existing D3D12 upload-capacity survivor without adding
+a duplicate root. The VC-1 backend performs unchecked start-code and slice
+copies into the common raw-image-sized resource; later repair `1307db3d3c` adds
+the exact missing remaining-capacity check. AV1 can accumulate partial tile
+groups into a raw-image-sized heap buffer and then copy the completed frame into
+the equally fixed D3D12 resource without bounding either operation. Later
+repairs `a90fbb6bc9` and `e1ef95c779` independently add the slice-buffer and
+frame-resource checks. These are codec-specific manifestations of the already
+sealed H.264/HEVC capacity-policy root.
+
+The remaining terminal leads close under concrete contracts. `vf_showinfo`'s
+detection-box loop would require malformed public `AVFrame` side data; every
+in-tree producer allocates the declared boxes, while the actual unchecked DNN
+classification count is already represented by the existing classification
+survivor. BRender's 16-bit width prevents row-width overflow and its later
+division guard closes total-size overflow. JPEG2000 and VC-1 parser state bounds
+close their apparent accesses. WBMP truncated frames use zero-initialized frame
+pools; AASC always targets the full 1024-byte PAL8 palette; HAP offset and
+allocation invariants hold; and RPL checks `nb_index_entries` before indexing.
+
+The other candidates likewise close under producer, platform, or API contracts.
+`audioconvert` channel maps require valid public indexes. Media Foundation
+encoder buffers follow framework capacity contracts. Guided, dejudder, Vulkan,
+SHA, SHA-512, LXF, OpenH264, BSF, and `sidxindex` leads retain their validated
+frame, allocation, state, or library bounds.
+
+Only the blurdetect file adds a new root. Current totals are 58 confirmed root
+causes and 49 dynamically reproduced issues. Coverage is 1,116/4,995 (22.34%),
+with 3,879 historically ranked files remaining.
+
+Directly slicing this machine's unchanged 4,995-file deterministic order
+reproduces ranks 1093–1116 and their committed manifest and SHA-256 exactly. The
+next unchanged exact-path manifest seals ranks 1117–1140 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1117_1140.json` with SHA-256
+`5ed7257f74c66a62b8faca10f25b9966993efa0c088cf41189dbe9d33076e243`.
