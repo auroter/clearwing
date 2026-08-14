@@ -1925,5 +1925,96 @@
         "end": 50
       }
     ]
+  },
+  {
+    "case_id": "hw-base-encode-empty-flush-null-dereference",
+    "finding": {
+      "id": "ffmpeg-hw-base-encode-empty-flush-null-dereference",
+      "finding_type": "denial_of_service",
+      "cwe": "CWE-476",
+      "file": "libavcodec/hw_base_encode.c",
+      "line_number": 508,
+      "severity": "low",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The shared VAAPI/D3D12 encoder receive path does not handle flushing an encoder that has never accepted a frame. The public avcodec_send_frame(ctx, NULL) operation marks the generic encoder as draining and immediately invokes its receive callback. ff_encode_get_frame consequently returns EOF; the hardware path converts that status into frame == NULL and calls hw_base_encode_send_frame before its later empty-queue check. With no queued pictures, input_order and decode_delay are both zero and pic_end is NULL, so the timestamp repair condition succeeds and reads pic_end->pts. A sanitizer-instrumented direct production-function harness deterministically reports null-member access at line 508 followed by an ASan SEGV.",
+      "code_snippet": "if (ctx->input_order <= ctx->decode_delay) ctx->dts_pts_diff = ctx->pic_end->pts - ctx->first_pts;",
+      "poc": "Run evaluations/run_ffmpeg_hw_base_encode_empty_flush_reproducer.py against the configured sanitizer-instrumented checkout.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a documented empty-stream flush enters generic draining, is converted back into a NULL input frame by the hardware receive callback, and dereferences an absent final-picture node before the callback's empty-queue guard",
+        "steps": [
+          {
+            "file": "libavcodec/avcodec.h",
+            "line": 2403,
+            "function": "avcodec_send_frame",
+            "code_snippet": "It can be NULL, in which case it is considered a flush packet.",
+            "note": "The public API explicitly permits a NULL frame to signal end of stream; it does not require a preceding non-NULL frame."
+          },
+          {
+            "file": "libavcodec/encode.c",
+            "line": 505,
+            "function": "avcodec_send_frame",
+            "code_snippet": "if (!frame) { avci->draining = 1; }",
+            "note": "An empty-stream flush sets draining without creating buffer_frame or any hardware picture."
+          },
+          {
+            "file": "libavcodec/encode.c",
+            "line": 513,
+            "function": "avcodec_send_frame",
+            "code_snippet": "ret = encode_receive_packet_internal(avctx, avci->buffer_pkt);",
+            "note": "The send call immediately enters the encoder's receive callback when no output packet is buffered."
+          },
+          {
+            "file": "libavcodec/encode.c",
+            "line": 208,
+            "function": "ff_encode_get_frame",
+            "code_snippet": "if (avci->draining) return AVERROR_EOF;",
+            "note": "The callback observes draining before it can obtain an input frame."
+          },
+          {
+            "file": "libavcodec/hw_base_encode.c",
+            "line": 581,
+            "function": "ff_hw_base_encode_receive_packet",
+            "code_snippet": "err = ff_encode_get_frame(avctx, frame); if (err == AVERROR_EOF) { frame = NULL; } ... err = hw_base_encode_send_frame(avctx, ctx, frame);",
+            "note": "The shared VAAPI/D3D12 path converts EOF into a NULL frame and sends it before checking pic_start at line 591."
+          },
+          {
+            "file": "libavcodec/hw_base_encode.c",
+            "line": 508,
+            "function": "hw_base_encode_send_frame",
+            "code_snippet": "ctx->dts_pts_diff = ctx->pic_end->pts - ctx->first_pts;",
+            "note": "For the exact empty state input_order == decode_delay == 0, the condition is true while pic_end is NULL; UBSan and ASan reproduce the null read."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/avcodec.h",
+        "start": 2393,
+        "end": 2427
+      },
+      {
+        "path": "libavcodec/encode.c",
+        "start": 203,
+        "end": 216
+      },
+      {
+        "path": "libavcodec/encode.c",
+        "start": 491,
+        "end": 518
+      },
+      {
+        "path": "libavcodec/hw_base_encode.c",
+        "start": 497,
+        "end": 513
+      },
+      {
+        "path": "libavcodec/hw_base_encode.c",
+        "start": 575,
+        "end": 596
+      }
+    ]
   }
 ]

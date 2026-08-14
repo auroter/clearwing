@@ -2281,3 +2281,59 @@ reproduces ranks 973–996 and their committed manifest and SHA-256 exactly. The
 next unchanged exact-path manifest seals ranks 997–1020 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_0997_1020.json` with SHA-256
 `80ee549f21a8845b0c65c8b2b5647b463554e2b3afb148d9903c5d3f0ec9199f`.
+
+### Blind wave 997–1020 and an empty hardware-encoder flush crash
+
+The sealed run completed all 24 exact-path trajectories with a successful
+source-bearing action. It used 7,847,498 tokens over 865 model calls, made 186
+candidate/finding calls, performed 25 automatic context compactions, and
+produced zero accepted formal findings. The replacement inference endpoint
+completed the run without reporting failures.
+
+Offline review found one novel root in the shared VAAPI/D3D12 encoder state
+machine. The public `avcodec_send_frame(ctx, NULL)` API explicitly permits an
+empty-stream flush. Generic encoding marks the context as draining and
+immediately enters the hardware receive callback. `ff_encode_get_frame` returns
+EOF, the callback converts that status into `frame == NULL`, and it calls
+`hw_base_encode_send_frame` before checking whether `pic_start` is empty. With
+no submitted frames, `input_order == decode_delay == 0` and `pic_end == NULL`;
+the timestamp-repair condition therefore succeeds and reads `pic_end->pts`.
+A sanitizer-instrumented direct production-function harness reports UBSan null
+member access at `hw_base_encode.c:508`, followed by an ASan SEGV at address
+offset `0x28` from NULL.
+
+The durable artifacts are
+`evaluations/ffmpeg_hw_base_encode_empty_flush_reproducer.c` and
+`evaluations/run_ffmpeg_hw_base_encode_empty_flush_reproducer.py`. The ignored
+proof record is
+`results/sourcehunt-optimization/hw-base-encode-empty-flush-reproducer.json`;
+it records `expected_observed=true` at pinned FFmpeg commit
+`795bccdaf57772b1803914dee2f32d52776518e2`.
+
+The remaining terminal leads close under concrete contracts. An exhaustive
+calculation across every MetaSound mode and period coefficient confirms that
+`add_peak` consumes exactly the shape length and that its largest speech index
+remains inside the mode-sized output (the tightest 512-sample modes stop at
+index 509). Dirac's speculative two-byte refill remains inside the padded
+parser packet, and its overread state supplies the format-required one bits.
+YUV4's odd final row and column land in decoder-owned aligned padding, while
+its input-size arithmetic is bounded by the image-size validator. Indeo, RL,
+and Photo CD arrays share their exact producer counts; HEVC motion-vector
+indices share the allocation's minimum-PU geometry. OpenCL remap uses image
+objects rather than raw unchecked pointers. A64 palette values are fixed,
+strictly increasing, and cover the complete dither range. Framequeue sample
+metadata, swscale slices, JACK buffers, vvenc access units, ZMQ command replies,
+MV stream indices, RIFF header fields, telecine frames, graph2dot formats, and
+the remaining encoder/filter paths likewise close under their allocation,
+external-library, metadata-only, or public-API producer invariants.
+
+The hardware encoder file had no prior survivor entry, so the root is novel.
+Current totals are 55 confirmed root causes and 46 dynamically reproduced
+issues. Coverage is 1,020/4,995 (20.42%), with 3,975 historically ranked files
+remaining.
+
+Directly slicing this machine's unchanged 4,995-file deterministic order
+reproduces ranks 997–1020 and their committed manifest and SHA-256 exactly. The
+next unchanged exact-path manifest seals ranks 1021–1044 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1021_1044.json` with SHA-256
+`0cbb26440c0d20c9cf16978679ce45e5afb32bb518a6f1dec7a526bc7bc95fd4`.
