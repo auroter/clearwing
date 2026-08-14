@@ -2451,3 +2451,66 @@ reproduces ranks 1045–1068 and their committed manifest and SHA-256 exactly.
 The next unchanged exact-path manifest seals ranks 1069–1092 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1069_1092.json` with SHA-256
 `99ba2473feae3eea95b4b0468a6dba13d5e4fb3f1b7e67855b3e638bb04afbc3`.
+
+### Blind wave 1069–1092 and an IAMF FLAC extradata overflow
+
+The sealed run completed all 24 exact-path trajectories with a successful
+source-bearing action. It used 6,749,450 tokens over 752 model calls, made 160
+candidate/finding calls, performed 21 automatic context compactions, and
+produced zero accepted formal findings. The replacement inference endpoint
+completed the run without reporting failures.
+
+Offline review confirmed one novel root in the IAMF muxer's FLAC
+codec-configuration rewrite. Both initial stream extradata and packet-supplied
+replacement extradata are duplicated with exact-sized `av_memdup` allocations,
+which discard the public input buffer's required padding. No FLAC minimum-size
+guard precedes `update_extradata`; that function parses through an optimized bit
+reader and then unconditionally copies a 13-byte rewrite back into the duplicate.
+A production-function proof supplies a correctly padded public 12-byte codec
+configuration. `fill_codec_config` creates an exact 12-byte duplicate, and ASan
+reports a four-byte heap-buffer-overflow read beginning one byte beyond that
+allocation in `get_bits`, with `av_memdup` in the allocation trace. Without
+sanitizer termination, the subsequent 13-byte copy also exceeds the allocation
+by one byte. A later public FFmpeg repair independently confirms the root by
+replacing both exact-sized duplicates with overflow-checked padded allocations.
+
+The durable artifacts are
+`evaluations/ffmpeg_iamf_flac_short_extradata_reproducer.c` and
+`evaluations/run_ffmpeg_iamf_flac_short_extradata_reproducer.py`. The ignored
+proof record is
+`results/sourcehunt-optimization/iamf-flac-short-extradata-reproducer.json`; it
+records `expected_observed=true` at pinned FFmpeg commit
+`795bccdaf57772b1803914dee2f32d52776518e2`.
+
+The remaining terminal leads close under concrete contracts. Xiph RTP enters
+its unfragmented raw buffering path only when the complete frame is no larger
+than `max_pkt_size`; larger packets take the bounded fragment loop. Indeo 2 run
+codes may advance the inter-row cursor beyond width, but the loop exits before
+any access and resets the cursor on the next row. Rotate's four-byte temporary
+matches the maximum pixel step of its explicit format list, and both packed and
+planar overlay loops clamp the source and destination intervals. APV bounds
+each component by the remaining tile size and rechecks the complete bit span;
+H.261 rejects every scan index at 64; VMDAudio's chunk equation produces exactly
+one output block; and PCX validates the complete packed or planar scanline.
+
+The other candidates likewise close under producer, allocation, or API
+invariants. ALSA's reordered multi-channel frame size keeps the power-of-two
+growth below signed overflow. AAX retains a nonempty zero-initialized segment
+array and bounds each transition. OpenHarmony copies the minimum of packet size
+and framework-reported buffer capacity. MSS arithmetic models retain their
+cumulative-probability and palette domains. libjxl consumes valid AVFrame
+geometry; OCIO slices come from the bounded filter scheduler; QSV geometry is
+validated by the hardware API; and format negotiation, gradients, vibrance,
+ICO reads, libsrt options, and the remaining filter/codec paths stay within
+their frame, library, or public-API contracts.
+
+The IAMF writer had no prior survivor entry, so the root is novel. Current
+totals are 57 confirmed root causes and 48 dynamically reproduced issues.
+Coverage is 1,092/4,995 (21.86%), with 3,903 historically ranked files
+remaining.
+
+Directly slicing this machine's unchanged 4,995-file deterministic order
+reproduces ranks 1069–1092 and their committed manifest and SHA-256 exactly. The
+next unchanged exact-path manifest seals ranks 1093–1116 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1093_1116.json` with SHA-256
+`bfba488d4b1e361f292be4ea5ba086a63d3ce265298f5e04a08fe3874fb01da2`.

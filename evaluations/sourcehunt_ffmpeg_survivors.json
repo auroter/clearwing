@@ -2097,5 +2097,86 @@
         "end": 160
       }
     ]
+  },
+  {
+    "case_id": "iamf-flac-short-extradata-overflow",
+    "finding": {
+      "id": "ffmpeg-iamf-flac-short-extradata-overflow",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavformat/iamf_writer.c",
+      "line_number": 63,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "The IAMF muxer's FLAC codec-configuration path accepts nonempty caller- or packet-supplied extradata without a 13-byte minimum and duplicates it with av_memdup into an exact-sized heap allocation, stripping the public input's required AV_INPUT_BUFFER_PADDING_SIZE tail. update_extradata then parses fields through the optimized bit reader and unconditionally copies a 13-byte rewrite back into that allocation. A production-function proof supplies a correctly padded public 12-byte codec configuration; fill_codec_config creates the exact 12-byte duplicate and ASan reports a four-byte heap-buffer-overflow read beginning one byte past it in get_bits. In an unsanitized run the later 13-byte memcpy also writes one byte past the allocation. FFmpeg's subsequent public fix replaced both exact-sized duplicates with overflow-checked padded allocations.",
+      "code_snippet": "codec_config->extradata = av_memdup(st->codecpar->extradata, st->codecpar->extradata_size); ... put_bits(&pb, 20, get_bits(&gb, 20)); ... memcpy(codec_config->extradata, buf, sizeof(buf));",
+      "poc": "Build and run evaluations/ffmpeg_iamf_flac_short_extradata_reproducer.c with evaluations/run_ffmpeg_iamf_flac_short_extradata_reproducer.py against the configured pinned checkout.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "IAMF strips required padding from an undersized FLAC configuration, parses beyond the exact heap duplicate, and would copy the complete 13-byte rewrite beyond that allocation",
+        "steps": [
+          {
+            "file": "libavformat/iamf_writer.c",
+            "line": 128,
+            "function": "fill_codec_config",
+            "code_snippet": "if (st->codecpar->extradata_size) {",
+            "note": "Any nonempty FLAC extradata reaches the rewrite; this path has no codec-specific minimum-size guard."
+          },
+          {
+            "file": "libavformat/iamf_writer.c",
+            "line": 129,
+            "function": "fill_codec_config",
+            "code_snippet": "codec_config->extradata = av_memdup(st->codecpar->extradata, st->codecpar->extradata_size);",
+            "note": "The proof's public source buffer has the required 64 padding bytes, but av_memdup creates the exact 12-byte allocation identified in the ASan trace."
+          },
+          {
+            "file": "libavformat/iamf_writer.c",
+            "line": 57,
+            "function": "update_extradata",
+            "code_snippet": "ret = init_get_bits8(&gb, codec_config->extradata, codec_config->extradata_size);",
+            "note": "The exact-sized duplicate is installed as a GetBitContext even though optimized bit loads require the padding that the producer removed."
+          },
+          {
+            "file": "libavformat/iamf_writer.c",
+            "line": 63,
+            "function": "update_extradata",
+            "code_snippet": "put_bits(&pb, 20, get_bits(&gb, 20));",
+            "note": "ASan reports a four-byte heap-buffer-overflow read beginning one byte beyond the 12-byte duplicate, with fill_codec_config and av_memdup in the allocation trace."
+          },
+          {
+            "file": "libavformat/iamf_writer.c",
+            "line": 70,
+            "function": "update_extradata",
+            "code_snippet": "memcpy(codec_config->extradata, buf, sizeof(buf));",
+            "note": "Without sanitizer termination, the unconditional 13-byte rewrite also exceeds a 12-byte allocation by one byte."
+          },
+          {
+            "file": "libavformat/iamf_writer.c",
+            "line": 1244,
+            "function": "ff_iamf_write_audio_frame",
+            "code_snippet": "codec_config->extradata = av_memdup(new_extradata, new_extradata_size); ... return update_extradata(codec_config);",
+            "note": "Packet-supplied replacement extradata repeats the same exact-allocation-to-rewrite path."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/iamf_writer.c",
+        "start": 35,
+        "end": 77
+      },
+      {
+        "path": "libavformat/iamf_writer.c",
+        "start": 108,
+        "end": 145
+      },
+      {
+        "path": "libavformat/iamf_writer.c",
+        "start": 1228,
+        "end": 1253
+      }
+    ]
   }
 ]
