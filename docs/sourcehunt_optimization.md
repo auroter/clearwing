@@ -2866,3 +2866,86 @@ reproduces ranks 1189–1212 and their committed manifest and SHA-256 exactly. T
 next unchanged exact-path manifest seals ranks 1213–1236 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1213_1236.json` with SHA-256
 `a590597815ced85a491b5f6404b003682d6cefebc5fed84abafb80d6ee8be19b`.
+
+### Blind wave 1213–1236 and six dynamically confirmed roots
+
+The sealed run completed all 24 exact-path trajectories with a successful
+source-bearing action. It used 6,318,573 tokens over 711 model calls, made 150
+candidate/finding calls, performed 17 automatic context compactions, and
+produced no accepted formal findings. The replacement inference endpoint again
+completed without model or tool failures.
+
+Offline review confirmed six independent roots. Libxavs advertises delay and
+accepts a public flush before any frame, but its first zero-NAL result computes
+DTS from PTS-ring indices -1 and -2. With three ring entries, ASan reports an
+eight-byte read immediately before the allocation. The ASS muxer's
+unparenthesized carriage-return/newline condition evaluates `p[-1]` after a
+one-byte newline is removed; ASan reproduces the underflow, and later repair
+`aa1f4ed774` adds exactly the missing parentheses.
+
+The VC-2 HQ RTP packetizer validates a data-unit length only against its input
+frame. A 200-byte sequence unit forwards 187 bytes into a fixed 64-byte payload
+buffer, and ASan catches the write; repair `1afd5c3dda` adds the missing payload
+capacity check. Sega FILM reads a packet-controlled 24-bit Cinepak size and uses
+zero directly as a modulo divisor. A complete four-byte packet makes UBSan
+abort at that expression.
+
+Two information disclosures complete the set. RSCC gives zlib a 16-byte
+full-frame capacity, accepts a valid stream that expands to four bytes, ignores
+the returned length, and copies all 16 declared tile bytes. The production
+decoder proof observes twelve stale markers in the returned frame; repair
+`a5fe21a1a4` explicitly names the heap disclosure and zero-fills that tail. SBC
+accepts a low-delay stereo configuration whose derived bitpool is 249 against a
+maximum of 128. It allocates a 133-byte output, writes three header bytes,
+ignores the packer's error, and publishes all 130 untouched tail bytes. Repair
+`3540a6a308`, titled `Don't output uninitialized data`, moves the exact bitpool
+check into initialization.
+
+The durable artifacts are
+`evaluations/ffmpeg_libxavs_empty_flush_reproducer.c`,
+`evaluations/ffmpeg_libxavs_stub/xavs.h`,
+`evaluations/run_ffmpeg_libxavs_empty_flush_reproducer.py`,
+`evaluations/ffmpeg_assenc_newline_underflow_reproducer.c`,
+`evaluations/run_ffmpeg_assenc_newline_underflow_reproducer.py`,
+`evaluations/ffmpeg_rtp_vc2hq_payload_overflow_reproducer.c`,
+`evaluations/run_ffmpeg_rtp_vc2hq_payload_overflow_reproducer.py`,
+`evaluations/ffmpeg_segafilm_zero_cinepak_size_reproducer.c`,
+`evaluations/run_ffmpeg_segafilm_zero_cinepak_size_reproducer.py`,
+`evaluations/ffmpeg_rscc_short_deflate_disclosure_reproducer.c`,
+`evaluations/run_ffmpeg_rscc_short_deflate_disclosure_reproducer.py`,
+`evaluations/ffmpeg_sbc_invalid_bitpool_disclosure_reproducer.c`, and
+`evaluations/run_ffmpeg_sbc_invalid_bitpool_disclosure_reproducer.py`. Their
+ignored proof records under `results/sourcehunt-optimization/` all record
+`expected_observed=true` at pinned FFmpeg commit
+`795bccdaf57772b1803914dee2f32d52776518e2`.
+
+Review also extended the existing D3D12 upload-capacity root to VP9. Its backend
+copies the accepted frame into the same raw-image-sized upload resource without
+a capacity check; later repair `3abec89a45` adds that exact comparison. This is
+a codec-specific variant of the already recorded H.264, HEVC, VC-1, and AV1
+mechanism, not a seventh root.
+
+The remaining repair leads do not add survivors. H.264 parser repairs
+`3c9ae91f19` and `b7e56970da` are later branch cherry-picks of original commits
+`73681f888d` and `30a6b78bd4`, both already ancestors of the pinned snapshot.
+The MPEG-4 DSP `ptrdiff_t` change in `7b05d16ce7` aligns its callback type with
+the caller, while reachable frame linesizes still originate in the public
+`int`-sized `AVFrame.linesize` domain. Neither is a pinned-source vulnerability.
+The user-supplied H.264 slice-sentinel chain independently corroborates the
+existing slice-counter survivor and is not counted again.
+
+Other terminal candidates close under packet, producer, or platform contracts.
+JPEG-LS, ARBC, MPEG-1/2, TAK, EVC, VP9 superframe, RFC 4175, and the filter
+paths retain their validated size or frame-state bounds. FFplay, framebuffer,
+hardware-map, and random-seed leads require trusted device/framework state or
+have no memory-safety effect.
+
+The six mechanisms raise the totals to 77 confirmed root causes and 67
+dynamically reproduced issues. Coverage is 1,236/4,995 (24.74%), with 3,759
+historically ranked files remaining.
+
+Directly slicing this machine's unchanged 4,995-file deterministic order
+reproduces ranks 1213–1236 and their committed manifest and SHA-256 exactly. The
+next unchanged exact-path manifest seals ranks 1237–1260 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1237_1260.json` with SHA-256
+`eba7617217a4b9ca6db6cca4007efc677d8f926821b69ea75be07e02fd995a96`.

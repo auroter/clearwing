@@ -1274,12 +1274,12 @@
       "severity": "high",
       "confidence": "high",
       "evidence_level": "root_cause_explained",
-      "description": "The common D3D12VA decoder allocates its fixed upload resource from the decoded frame's raw-image buffer size, but the H.264, HEVC, VC-1, and AV1 backends copy accepted compressed frame data into that mapped resource without checking the resulting byte count. Compressed-picture size is not bounded by decoded-image size. H.264 and HEVC additionally prepend three bytes per slice, VC-1 can prepend four-byte start codes, and AV1 can first accumulate partial tile groups into a separate heap buffer with the same raw-image-sized capacity before copying the unbounded total into the resource. The durable proof generates a standards-valid, normally decodable 16x5400 yuv420p H.264 Baseline stream whose slice bytes plus inserted prefixes exceed both the resource's 129,600-byte declared width and its 131,072-byte 64 KiB-aligned allocation floor. A valid 16x16 HEVC Main stream independently exceeds its 384-byte declared resource width. Later FFmpeg repairs add the missing capacity checks to the VC-1 mapped copy and to both AV1 accumulation and final-frame copy paths, independently confirming those variants. The exact H.264 and HEVC byte counts are deterministically recorded by the proof script and can vary slightly with the installed encoder build. No Windows D3D12 runtime was available, so the root is retained as source-, producer-, and repair-confirmed rather than sanitizer-observed.",
+      "description": "The common D3D12VA decoder allocates its fixed upload resource from the decoded frame's raw-image buffer size, but the H.264, HEVC, VC-1, VP9, and AV1 backends copy accepted compressed frame data into that mapped resource without checking the resulting byte count. Compressed-picture size is not bounded by decoded-image size. H.264 and HEVC additionally prepend three bytes per slice, VC-1 can prepend four-byte start codes, and AV1 can first accumulate partial tile groups into a separate heap buffer with the same raw-image-sized capacity before copying the unbounded total into the resource. The durable proof generates a standards-valid, normally decodable 16x5400 yuv420p H.264 Baseline stream whose slice bytes plus inserted prefixes exceed both the resource's 129,600-byte declared width and its 131,072-byte 64 KiB-aligned allocation floor. A valid 16x16 HEVC Main stream independently exceeds its 384-byte declared resource width. Later FFmpeg repairs add the missing capacity checks to the VC-1, VP9, and AV1 mapped copies and to AV1 accumulation, independently confirming those variants. The exact H.264 and HEVC byte counts are deterministically recorded by the proof script and can vary slightly with the installed encoder build. No Windows D3D12 runtime was available, so the root is retained as source-, producer-, and repair-confirmed rather than sanitizer-observed.",
       "code_snippet": "*(uint32_t *)mapped_ptr = START_CODE; mapped_ptr += START_CODE_SIZE; memcpy(mapped_ptr, &ctx_pic->bitstream[position], size);",
-      "poc": "Run evaluations/run_ffmpeg_d3d12va_upload_capacity_proof.py for either sealed checkout. It creates valid H.264 and HEVC streams, confirms software decoding, and records the exact VCL bytes that the D3D12 callbacks copy versus the common upload-resource capacity. Inspect later FFmpeg repairs 1307db3d3c, e1ef95c779, and a90fbb6bc9 for the equivalent missing VC-1 frame, AV1 frame, and AV1 slice-buffer bounds.",
+      "poc": "Run evaluations/run_ffmpeg_d3d12va_upload_capacity_proof.py for either sealed checkout. It creates valid H.264 and HEVC streams, confirms software decoding, and records the exact VCL bytes that the D3D12 callbacks copy versus the common upload-resource capacity. Inspect later FFmpeg repairs 1307db3d3c, 3abec89a45, e1ef95c779, and a90fbb6bc9 for the equivalent missing VC-1 frame, VP9 frame, AV1 frame, and AV1 slice-buffer bounds.",
       "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
       "vulnerability_trace": {
-        "summary": "valid compressed H.264, HEVC, VC-1, or AV1 frame data can exceed a raw-image-sized D3D12 upload allocation; codec-specific paths then perform unchecked mapped writes, and AV1 also has an unchecked intermediate accumulation buffer",
+        "summary": "valid compressed H.264, HEVC, VC-1, VP9, or AV1 frame data can exceed a raw-image-sized D3D12 upload allocation; codec-specific paths then perform unchecked mapped writes, and AV1 also has an unchecked intermediate accumulation buffer",
         "steps": [
           {"file": "libavcodec/d3d12va_decode.c", "line": 141, "function": "ff_d3d12va_get_suitable_max_bitstream_size", "code_snippet": "return av_image_get_buffer_size(frames_ctx->sw_format, avctx->coded_width, avctx->coded_height, 1);", "note": "Upload capacity is derived from decoded pixel storage, not from the actual compressed access-unit size."},
           {"file": "libavcodec/d3d12va_decode.c", "line": 192, "function": "d3d12va_get_valid_helper_objects", "code_snippet": ".Width = ctx->bitstream_size", "note": "Every helper upload resource has exactly that fixed capacity."},
@@ -1289,6 +1289,7 @@
           {"file": "libavcodec/d3d12va_hevc.c", "line": 129, "function": "update_input_arguments", "code_snippet": "*(uint32_t *)mapped_ptr = START_CODE; mapped_ptr += 3; memcpy(mapped_ptr, &ctx_pic->bitstream[position], size);", "note": "The independently duplicated HEVC loop performs the same unchecked mapped write."},
           {"file": "libavcodec/d3d12va_vc1.c", "line": 125, "function": "update_input_arguments", "code_snippet": "memcpy(mapped_ptr, start_code, sizeof(start_code));", "note": "VC-1 can add a four-byte start code for each slice without checking the remaining mapped-resource capacity."},
           {"file": "libavcodec/d3d12va_vc1.c", "line": 135, "function": "update_input_arguments", "code_snippet": "memcpy(mapped_ptr, &ctx_pic->bitstream[position], size);", "note": "The slice copy is likewise unchecked; later repair 1307db3d3c adds a remaining-capacity comparison covering both writes."},
+          {"file": "libavcodec/d3d12va_vp9.c", "line": 107, "function": "update_input_arguments", "code_snippet": "memcpy(mapped_data, ctx_pic->bitstream, ctx_pic->slice.SliceBytesInBuffer);", "note": "VP9 copies its accepted frame bytes without comparing SliceBytesInBuffer to the fixed upload width; later repair 3abec89a45 adds that exact capacity check."},
           {"file": "libavcodec/d3d12va_av1.c", "line": 95, "function": "d3d12va_av1_decode_slice", "code_snippet": "memcpy(ctx_pic->bitstream + ctx_pic->bitstream_size, buffer, size);", "note": "Partial AV1 tile groups accumulate into a raw-image-sized heap buffer without bounding the prior total plus the new slice; later repair a90fbb6bc9 adds that exact check."},
           {"file": "libavcodec/d3d12va_av1.c", "line": 135, "function": "update_input_arguments", "code_snippet": "memcpy(mapped_data, ctx_pic->bitstream, ctx_pic->bitstream_size);", "note": "The completed AV1 frame is copied to the equally fixed D3D12 resource without a capacity comparison; later repair e1ef95c779 adds it."},
           {"file": "libavcodec/d3d12va_av1.c", "line": 177, "function": "d3d12va_av1_decode_init", "code_snippet": "av1_ctx->bitstream_buffer = av_malloc(ff_d3d12va_get_suitable_max_bitstream_size(avctx));", "note": "The AV1 accumulation allocation uses the same decoded-image-derived capacity as the upload resource."}
@@ -1301,6 +1302,7 @@
       {"path": "libavcodec/d3d12va_h264.c", "start": 75, "end": 155},
       {"path": "libavcodec/d3d12va_hevc.c", "start": 74, "end": 150},
       {"path": "libavcodec/d3d12va_vc1.c", "start": 70, "end": 152},
+      {"path": "libavcodec/d3d12va_vp9.c", "start": 73, "end": 129},
       {"path": "libavcodec/d3d12va_av1.c", "start": 70, "end": 183},
       {"path": "libavcodec/h264dec.c", "start": 645, "end": 680},
       {"path": "libavcodec/hevc/hevcdec.c", "start": 3032, "end": 3053}
@@ -3129,6 +3131,416 @@
         "path": "libavfilter/vf_atadenoise.c",
         "start": 455,
         "end": 490
+      }
+    ]
+  },
+  {
+    "case_id": "libxavs-empty-flush-negative-pts-index",
+    "finding": {
+      "id": "ffmpeg-libxavs-empty-flush-negative-pts-index",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavcodec/libxavs.c",
+      "line_number": 162,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "Libxavs advertises encoder delay, so a public flush before any input frame reaches XAVS_frame with a null frame and a zero-initialized out_frame_count. If the external encoder successfully returns zero NALs, FFmpeg emits its end marker and derives DTS from entries (out_frame_count - 1) and (out_frame_count - 2) modulo max_b_frames + 1. With any positive max_b_frames, C preserves the negative remainder, indexing before the allocated PTS ring. The direct production-function proof uses max_b_frames=2 and a valid zero-NAL library result; ASan reports an eight-byte heap read immediately before the three-entry ring.",
+      "code_snippet": "pkt->dts = 2*x4->pts_buffer[(x4->out_frame_count-1)%(avctx->max_b_frames+1)] - x4->pts_buffer[(x4->out_frame_count-2)%(avctx->max_b_frames+1)];",
+      "poc": "Build and run evaluations/ffmpeg_libxavs_empty_flush_reproducer.c with evaluations/run_ffmpeg_libxavs_empty_flush_reproducer.py and the proof-only evaluations/ffmpeg_libxavs_stub/xavs.h.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "an empty public encoder flush leaves the output counter at zero, then libxavs applies C remainder to negative PTS-ring offsets",
+        "steps": [
+          {
+            "file": "libavcodec/encode.c",
+            "line": 505,
+            "function": "avcodec_send_frame",
+            "code_snippet": "if (!frame) { avci->draining = 1; }",
+            "note": "Libxavs declares AV_CODEC_CAP_DELAY, so flushing an opened encoder before submitting a frame is a valid path to its encode callback with frame == NULL."
+          },
+          {
+            "file": "libavcodec/libxavs.c",
+            "line": 348,
+            "function": "XAVS_init",
+            "code_snippet": "FF_ALLOCZ_TYPED_ARRAY(x4->pts_buffer, avctx->max_b_frames + 1)",
+            "note": "For max_b_frames=2 the PTS ring has exactly three int64_t entries, while the zero-allocated private context leaves out_frame_count at zero."
+          },
+          {
+            "file": "libavcodec/libxavs.c",
+            "line": 153,
+            "function": "XAVS_frame",
+            "code_snippet": "if (!ret) { if (!frame && !(x4->end_of_stream)) {",
+            "note": "A successful zero-NAL response makes encode_nals return zero and enters FFmpeg's end-marker path on the first empty flush."
+          },
+          {
+            "file": "libavcodec/libxavs.c",
+            "line": 162,
+            "function": "XAVS_frame",
+            "code_snippet": "pts_buffer[(out_frame_count-1)%(max_b_frames+1)] ... pts_buffer[(out_frame_count-2)%(max_b_frames+1)]",
+            "note": "The indices evaluate to -1 and -2. ASan catches the first eight-byte read immediately before the 24-byte allocation."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/libxavs.c",
+        "start": 122,
+        "end": 177
+      },
+      {
+        "path": "libavcodec/libxavs.c",
+        "start": 239,
+        "end": 350
+      },
+      {
+        "path": "libavcodec/encode.c",
+        "start": 289,
+        "end": 329
+      },
+      {
+        "path": "libavcodec/encode.c",
+        "start": 491,
+        "end": 519
+      }
+    ]
+  },
+  {
+    "case_id": "assenc-trailing-newline-precedence-underflow",
+    "finding": {
+      "id": "ffmpeg-assenc-trailing-newline-precedence-underflow",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavformat/assenc.c",
+      "line_number": 189,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The ASS muxer's trailing-line-ending loop omits parentheses around its carriage-return/newline alternatives. Because logical AND binds more tightly than OR, the newline operand still evaluates p[text_len - 1] after text_len reaches zero. A one-byte newline packet makes both strtol calls leave p at the packet start, so the next condition reads p[-1]. The direct production-function proof triggers a one-byte heap read immediately before the padded packet allocation. Later repair aa1f4ed774 adds exactly the missing parentheses and cites ada-1-poc.mkv.",
+      "code_snippet": "while (text_len > 0 && p[text_len - 1] == '\\r' || p[text_len - 1] == '\\n') text_len--;",
+      "poc": "Build and run evaluations/ffmpeg_assenc_newline_underflow_reproducer.c with evaluations/run_ffmpeg_assenc_newline_underflow_reproducer.py.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "an unparenthesized newline alternative survives the zero-length guard and indexes one byte before attacker-controlled subtitle text",
+        "steps": [
+          {
+            "file": "libavformat/assenc.c",
+            "line": 158,
+            "function": "write_packet",
+            "code_snippet": "char *p = pkt->data; ... strtol(p, &p, 10);",
+            "note": "For the proof's one-byte newline packet, neither integer parser advances p, leaving the text pointer at the allocation start."
+          },
+          {
+            "file": "libavformat/assenc.c",
+            "line": 188,
+            "function": "write_packet",
+            "code_snippet": "text_len = strlen(p);",
+            "note": "The logical text length is one; FFmpeg's packet padding supplies the terminator."
+          },
+          {
+            "file": "libavformat/assenc.c",
+            "line": 189,
+            "function": "write_packet",
+            "code_snippet": "while (text_len > 0 && p[text_len - 1] == '\\r' || p[text_len - 1] == '\\n')",
+            "note": "The first test strips the newline. On re-evaluation at length zero, the OR operand reads p[-1]; ASan reports a one-byte heap-buffer-overflow immediately before the 65-byte logical-plus-padding allocation."
+          },
+          {
+            "file": "libavformat/assenc.c",
+            "line": 189,
+            "function": "later repair aa1f4ed774",
+            "code_snippet": "while (text_len > 0 && (p[text_len - 1] == '\\r' || p[text_len - 1] == '\\n'))",
+            "note": "The later upstream fix adds the exact missing parentheses and records a concrete ada-1-poc.mkv trigger."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/assenc.c",
+        "start": 152,
+        "end": 203
+      }
+    ]
+  },
+  {
+    "case_id": "rtp-vc2hq-data-unit-payload-overflow",
+    "finding": {
+      "id": "ffmpeg-rtp-vc2hq-data-unit-payload-overflow",
+      "finding_type": "out_of_bounds_write",
+      "cwe": "CWE-787",
+      "file": "libavformat/rtpenc_vc2hq.c",
+      "line_number": 44,
+      "severity": "high",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The VC-2 HQ RTP packetizer validates an input-derived data-unit size only against the source frame, not against the muxer's fixed RTP payload buffer. Sequence and end units pass every byte after the 13-byte Dirac header directly to send_packet, which writes a four-byte payload header and copies the complete unit without consulting max_payload_size. The full packetizer-entry proof supplies a 200-byte sequence unit and a 64-byte payload allocation; ASan reports the 187-byte memcpy crossing the allocation end. Later repair 1afd5c3dda adds the exact missing capacity comparison and explicitly identifies the crafted-unit fixed-buffer overflow.",
+      "code_snippet": "memcpy(&rtp_ctx->buf[4 + info_hdr_size], buf, size);",
+      "poc": "Build and run evaluations/ffmpeg_rtp_vc2hq_payload_overflow_reproducer.c with evaluations/run_ffmpeg_rtp_vc2hq_payload_overflow_reproducer.py.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a frame-bounded but payload-unbounded VC-2 data unit is copied into the smaller fixed RTP muxer buffer",
+        "steps": [
+          {
+            "file": "libavformat/rtpenc_vc2hq.c",
+            "line": 115,
+            "function": "ff_rtp_send_vc2hq",
+            "code_snippet": "unit_size = AV_RB32(&unit[5]);",
+            "note": "The packet controls the 32-bit unit size; the proof encodes a 200-byte unit filling its source frame."
+          },
+          {
+            "file": "libavformat/rtpenc_vc2hq.c",
+            "line": 117,
+            "function": "ff_rtp_send_vc2hq",
+            "code_snippet": "if (unit_size > end - unit) break;",
+            "note": "This bound validates only the source span and does not relate unit_size to max_payload_size."
+          },
+          {
+            "file": "libavformat/rtpenc_vc2hq.c",
+            "line": 126,
+            "function": "ff_rtp_send_vc2hq",
+            "code_snippet": "send_packet(ctx, parse_code, 0, unit + 13, unit_size - 13, ...);",
+            "note": "The sequence-unit branch forwards all 187 payload bytes to the fixed 64-byte RTP buffer."
+          },
+          {
+            "file": "libavformat/rtpenc_vc2hq.c",
+            "line": 44,
+            "function": "send_packet",
+            "code_snippet": "memcpy(&rtp_ctx->buf[4 + info_hdr_size], buf, size);",
+            "note": "After the four-byte header, the 187-byte copy produces a 191-byte destination write. ASan reports the write at the end of the 64-byte allocation."
+          },
+          {
+            "file": "libavformat/rtpenc_vc2hq.c",
+            "line": 40,
+            "function": "later repair 1afd5c3dda",
+            "code_snippet": "size > rtp_ctx->max_payload_size - RTP_VC2HQ_PL_HEADER_SIZE - info_hdr_size",
+            "note": "The later repair rejects precisely the unit that cannot fit in the RTP payload buffer."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/rtpenc_vc2hq.c",
+        "start": 36,
+        "end": 142
+      }
+    ]
+  },
+  {
+    "case_id": "segafilm-zero-cinepak-size-division",
+    "finding": {
+      "id": "ffmpeg-segafilm-zero-cinepak-size-division",
+      "finding_type": "denial_of_service",
+      "cwe": "CWE-369",
+      "file": "libavformat/segafilmenc.c",
+      "line_number": 61,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The Sega FILM muxer's Cinepak path reads a packet-controlled 24-bit encoded size and uses it as the divisor of pkt->size modulo encoded_buf_size without rejecting zero. The generic mux framework imposes no Cinepak-specific nonzero field constraint. A fully allocated four-byte packet with all three header-size bytes zero makes the left side of the compound condition true and reaches modulo zero. The direct production-function proof aborts under UBSan at the exact expression.",
+      "code_snippet": "encoded_buf_size = AV_RB24(&pkt->data[1]); if (encoded_buf_size != pkt->size && (pkt->size % encoded_buf_size) != 0)",
+      "poc": "Build and run evaluations/ffmpeg_segafilm_zero_cinepak_size_reproducer.c with evaluations/run_ffmpeg_segafilm_zero_cinepak_size_reproducer.py.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a zero Cinepak header size passes directly from the packet into the Sega FILM muxer's modulo divisor",
+        "steps": [
+          {
+            "file": "libavformat/mux.c",
+            "line": 746,
+            "function": "write_packet",
+            "code_snippet": "ret = ffofmt(s->oformat)->write_packet(s, pkt);",
+            "note": "The public mux path dispatches the packet without a Cinepak-specific minimum or nonzero encoded-size validation."
+          },
+          {
+            "file": "libavformat/segafilmenc.c",
+            "line": 58,
+            "function": "film_write_packet",
+            "code_snippet": "if (codec_id == AV_CODEC_ID_CINEPAK)",
+            "note": "A Cinepak video stream selects the reformatting branch."
+          },
+          {
+            "file": "libavformat/segafilmenc.c",
+            "line": 59,
+            "function": "film_write_packet",
+            "code_snippet": "encoded_buf_size = AV_RB24(&pkt->data[1]);",
+            "note": "The proof's complete three-byte size field is zero, so encoded_buf_size becomes zero."
+          },
+          {
+            "file": "libavformat/segafilmenc.c",
+            "line": 61,
+            "function": "film_write_packet",
+            "code_snippet": "encoded_buf_size != pkt->size && (pkt->size % encoded_buf_size) != 0",
+            "note": "For a four-byte packet the first operand is true, forcing modulo by zero. UBSan aborts at this source line."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/segafilmenc.c",
+        "start": 46,
+        "end": 100
+      },
+      {
+        "path": "libavformat/mux.c",
+        "start": 722,
+        "end": 752
+      }
+    ]
+  },
+  {
+    "case_id": "rscc-short-deflate-heap-disclosure",
+    "finding": {
+      "id": "ffmpeg-rscc-short-deflate-heap-disclosure",
+      "finding_type": "information_disclosure",
+      "cwe": "CWE-200",
+      "file": "libavcodec/rscc.c",
+      "line_number": 314,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "The RSCC decoder gives zlib its full-frame heap-buffer capacity but does not check the returned decompressed length against the tile's declared pixel size. It then copies the complete declared tile from that reusable buffer into the decoded frame. A valid zlib stream expanding to four bytes for a 16-byte 2x2 BGR0 tile therefore publishes the twelve untouched bytes that follow the stream output. The full production-decoder proof pre-fills the reusable buffer with a marker, decodes the crafted packet, and observes all twelve stale bytes in the returned frame. Later repair a5fe21a1a4 names rscc_short_deflate_heap_disclosure.avi and zero-fills exactly this short expansion.",
+      "code_snippet": "uLongf len = ctx->inflated_size; ... uncompress(ctx->inflated_buf, &len, gbc->buffer, packed_size); ... pixels = ctx->inflated_buf;",
+      "poc": "Build and run evaluations/ffmpeg_rscc_short_deflate_disclosure_reproducer.c with evaluations/run_ffmpeg_rscc_short_deflate_disclosure_reproducer.py.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a short but valid deflate stream leaves prior heap bytes untouched, and RSCC copies those bytes into the returned frame as if the declared tile were fully inflated",
+        "steps": [
+          {
+            "file": "libavcodec/rscc.c",
+            "line": 130,
+            "function": "rscc_init",
+            "code_snippet": "ctx->inflated_size = avctx->width * avctx->height * ctx->component_size;",
+            "note": "The reusable zlib destination is sized for the complete decoded frame; the proof's 2x2 BGR0 frame gives it a 16-byte capacity."
+          },
+          {
+            "file": "libavcodec/rscc.c",
+            "line": 298,
+            "function": "rscc_decode_frame",
+            "code_snippet": "uLongf len = ctx->inflated_size;",
+            "note": "The decoder passes the full capacity to zlib rather than the tile's required byte count."
+          },
+          {
+            "file": "libavcodec/rscc.c",
+            "line": 308,
+            "function": "rscc_decode_frame",
+            "code_snippet": "ret = uncompress(ctx->inflated_buf, &len, gbc->buffer, packed_size);",
+            "note": "A valid stream writes four bytes and updates len to four, but the vulnerable decoder checks only zlib's return status."
+          },
+          {
+            "file": "libavcodec/rscc.c",
+            "line": 314,
+            "function": "rscc_decode_frame",
+            "code_snippet": "pixels = ctx->inflated_buf;",
+            "note": "The returned length is ignored, so the subsequent image-plane copy consumes all 16 declared tile bytes and exposes the twelve stale marker bytes."
+          },
+          {
+            "file": "libavcodec/rscc.c",
+            "line": 314,
+            "function": "later repair a5fe21a1a4",
+            "code_snippet": "if (len < pixel_size) { ... memset(ctx->inflated_buf + len, 0, pixel_size - len); pixel_size = len; }",
+            "note": "The later repair explicitly names the heap-disclosure sample and initializes precisely the short output tail."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/rscc.c",
+        "start": 72,
+        "end": 140
+      },
+      {
+        "path": "libavcodec/rscc.c",
+        "start": 263,
+        "end": 347
+      }
+    ]
+  },
+  {
+    "case_id": "sbc-invalid-bitpool-packet-disclosure",
+    "finding": {
+      "id": "ffmpeg-sbc-invalid-bitpool-packet-disclosure",
+      "finding_type": "information_disclosure",
+      "cwe": "CWE-200",
+      "file": "libavcodec/sbcenc.c",
+      "line_number": 325,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "The SBC encoder can derive a bitpool above the format's maximum from an otherwise accepted public encoder configuration. Its packet length calculation uses that invalid bitpool and allocates the full advertised output, but sbc_pack_frame writes only the first three header bytes before returning -5. The caller ignores the packer return, sets got_packet, and publishes the complete allocation. With 44.1 kHz stereo, 100 kbit/s, and a 1000-microsecond delay, the bitpool is 249 against a maximum of 128; the returned 133-byte packet contains only three initialized encoder bytes. The full public encode proof pre-fills a custom DR1 packet buffer and observes all 130 tail bytes unchanged. Later repair 3540a6a308 is explicitly titled 'Don't output uninitialized data' and moves the exact check into encoder initialization.",
+      "code_snippet": "sbc_pack_frame(avpkt, frame, j, sbc->msbc); *got_packet_ptr = 1;",
+      "poc": "Build and run evaluations/ffmpeg_sbc_invalid_bitpool_disclosure_reproducer.c with evaluations/run_ffmpeg_sbc_invalid_bitpool_disclosure_reproducer.py.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "an accepted invalid SBC bitpool allocates a complete output packet, the packer abandons it after three bytes, and its caller publishes the untouched tail",
+        "steps": [
+          {
+            "file": "libavcodec/sbcenc.c",
+            "line": 250,
+            "function": "sbc_encode_init",
+            "code_snippet": "frame->blocks = av_clip(((sbc->max_delay * avctx->sample_rate + 2) / (1000000 * frame->subbands)) - 10, 4, 16) & ~3;",
+            "note": "The proof uses the documented 1000-microsecond minimum delay with 44.1 kHz stereo and 100 kbit/s; initialization succeeds and derives a bitpool of 249."
+          },
+          {
+            "file": "libavcodec/sbcenc.c",
+            "line": 290,
+            "function": "sbc_encode_frame",
+            "code_snippet": "int frame_length = 4 + ... frame->blocks * frame->bitpool ...;",
+            "note": "The invalid bitpool is included in the output-size calculation, producing a 133-byte packet allocation."
+          },
+          {
+            "file": "libavcodec/sbcenc.c",
+            "line": 122,
+            "function": "sbc_pack_frame",
+            "code_snippet": "avpkt->data[0] = SBC_SYNCWORD; ... avpkt->data[2] = frame->bitpool;",
+            "note": "The packer initializes exactly three bytes before validating the bitpool."
+          },
+          {
+            "file": "libavcodec/sbcenc.c",
+            "line": 132,
+            "function": "sbc_pack_frame",
+            "code_snippet": "if (frame->bitpool > frame->subbands << ...) return -5;",
+            "note": "The 249 bitpool exceeds the 128 maximum, so packing stops before the CRC or audio payload and leaves 130 packet bytes untouched."
+          },
+          {
+            "file": "libavcodec/sbcenc.c",
+            "line": 325,
+            "function": "sbc_encode_frame",
+            "code_snippet": "sbc_pack_frame(avpkt, frame, j, sbc->msbc); *got_packet_ptr = 1;",
+            "note": "The caller discards the packer's result and unconditionally publishes the full packet; the proof observes every pre-filled tail marker through avcodec_receive_packet."
+          },
+          {
+            "file": "libavcodec/sbcenc.c",
+            "line": 255,
+            "function": "later repair 3540a6a308",
+            "code_snippet": "if (frame->bitpool > frame->subbands << ...) { ... return AVERROR_PATCHWELCOME; }",
+            "note": "The later repair rejects the invalid parameter combination during initialization before any output buffer can be published."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/sbcenc.c",
+        "start": 97,
+        "end": 198
+      },
+      {
+        "path": "libavcodec/sbcenc.c",
+        "start": 199,
+        "end": 329
+      },
+      {
+        "path": "libavcodec/encode.c",
+        "start": 105,
+        "end": 134
+      },
+      {
+        "path": "libavcodec/encode.c",
+        "start": 286,
+        "end": 344
       }
     ]
   }
