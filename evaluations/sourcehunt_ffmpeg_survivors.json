@@ -3844,5 +3844,81 @@
         "end": 852
       }
     ]
+  },
+  {
+    "case_id": "adx-new-extradata-stale-channel-state",
+    "finding": {
+      "id": "ffmpeg-adx-new-extradata-stale-channel-state",
+      "finding_type": "denial_of_service",
+      "cwe": "CWE-476",
+      "file": "libavcodec/adxdec.c",
+      "line_number": 232,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The ADX decoder copies the initial extradata's two-channel layout into private c->channels. A packet can then carry valid AV_PKT_DATA_NEW_EXTRADATA declaring one channel; adx_decode_header updates the public layout and coefficients, but the replacement branch leaves c->channels at two. The subsequent planar buffer allocation follows the new one-channel layout while the decode loop follows the stale private count. A 36-byte production decode therefore processes channel zero, passes the missing samples[1] plane to channel one, and aborts under ASan on a zero-page write. Later repair c10e7f5dc1, explicitly titled 'sync decoder channel state on NEW_EXTRADATA', synchronizes c->channels, marks the header parsed, resets predictors on a layout change, and identifies the out-of-array access.",
+      "code_snippet": "for (ch = 0; ch < c->channels; ch++) { ... adx_decode(c, samples[ch], samples_offset, buf, ch)",
+      "poc": "Build and run evaluations/ffmpeg_adx_new_extradata_channel_reproducer.c with evaluations/run_ffmpeg_adx_new_extradata_channel_reproducer.py.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "packet-side extradata shrinks the public planar layout without shrinking the decoder's private channel loop",
+        "steps": [
+          {
+            "file": "libavcodec/adxdec.c",
+            "line": 114,
+            "function": "adx_decode_init",
+            "code_snippet": "c->channels = avctx->ch_layout.nb_channels; c->header_parsed = 1;",
+            "note": "A valid initial two-channel ADX header establishes both the public layout and the private loop bound."
+          },
+          {
+            "file": "libavcodec/adxdec.c",
+            "line": 77,
+            "function": "adx_decode_header",
+            "code_snippet": "av_channel_layout_uninit(&avctx->ch_layout); ... avctx->ch_layout.nb_channels = channels;",
+            "note": "The valid packet-side replacement header changes the public layout from two channels to one."
+          },
+          {
+            "file": "libavcodec/adxdec.c",
+            "line": 173,
+            "function": "adx_decode_frame",
+            "code_snippet": "if (new_extradata && new_extradata_size > 0) { ... adx_decode_header(...); ... c->eof = 0; }",
+            "note": "The vulnerable replacement branch updates coefficients and eof state but never synchronizes c->channels."
+          },
+          {
+            "file": "libavcodec/adxdec.c",
+            "line": 225,
+            "function": "adx_decode_frame",
+            "code_snippet": "if ((ret = ff_get_buffer(avctx, frame, 0)) < 0) return ret;",
+            "note": "The public one-channel layout controls allocation of the planar S16 output frame."
+          },
+          {
+            "file": "libavcodec/adxdec.c",
+            "line": 232,
+            "function": "adx_decode_frame",
+            "code_snippet": "for (ch = 0; ch < c->channels; ch++) { ... adx_decode(c, samples[ch], samples_offset, buf, ch)",
+            "note": "The stale bound reaches channel one and passes its null output plane into adx_decode; ASan reports the invalid write at this line."
+          },
+          {
+            "file": "libavcodec/adxdec.c",
+            "line": 182,
+            "function": "later repair c10e7f5dc1",
+            "code_snippet": "c->channels = avctx->ch_layout.nb_channels; c->header_parsed = 1; if (old_channels != c->channels) memset(c->prev, 0, sizeof(c->prev));",
+            "note": "The later repair synchronizes exactly the stale state before buffer sizing and decoding."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/adxdec.c",
+        "start": 50,
+        "end": 120
+      },
+      {
+        "path": "libavcodec/adxdec.c",
+        "start": 160,
+        "end": 247
+      }
+    ]
   }
 ]

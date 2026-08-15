@@ -3021,3 +3021,52 @@ and their committed manifest exactly. The next exact-path manifest seals ranks
 1261–1284 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1261_1284.json` with SHA-256
 `e9ba37500413ad54cbf3189e0e2ce1c386e3f103fb98437848337b628d306d50`.
+
+### Blind wave 1261–1284 and the ADX channel-transition crash
+
+The sealed run completed all 24 exact-path trajectories with successful source
+work. It used 7,365,049 tokens, made 176 candidate/finding calls, and produced
+no accepted formal findings. The replacement inference endpoint completed
+without model or transport failures. RFC 4175 reached the repeated-action guard
+at step 40 only after its source had already been examined.
+
+Offline review confirmed one decoder root. Valid initial ADX extradata can set
+the public and private decoder state to two channels. A packet-side
+`AV_PKT_DATA_NEW_EXTRADATA` header can then change the public layout to one
+channel, but the vulnerable branch updates only that layout, coefficients, and
+EOF state. `ff_get_buffer` consequently allocates one planar S16 channel while
+the stale `c->channels == 2` loop still calls `adx_decode` for `samples[1]`.
+The 36-byte public decoder proof aborts under ASan on the resulting zero-page
+write at `adxdec.c:232`. Later repair `c10e7f5dc1`, titled `sync decoder channel
+state on NEW_EXTRADATA`, synchronizes the private count, marks the header parsed,
+resets predictors when the count changes, and explicitly names the out-of-array
+access.
+
+The durable artifacts are
+`evaluations/ffmpeg_adx_new_extradata_channel_reproducer.c` and
+`evaluations/run_ffmpeg_adx_new_extradata_channel_reproducer.py`. The ignored
+proof record reports `expected_observed=true` at pinned FFmpeg commit
+`795bccdaf57772b1803914dee2f32d52776518e2` and confirms every source and
+runtime predicate through the production decoder object.
+
+The remaining terminal candidates close under exact bounds or contracts.
+`af_apsyclip` always derives 128 psychoacoustic bins and its fourteen allocated
+rows match the generated spread sequence. AOM film grain accepts only 8-, 9-,
+10-, or 12-bit frames, keeping its scaling table at or below 4,096 entries.
+VAAPI drawbox passes invalid negative regions to the driver boundary rather than
+indexing host memory, where the API is expected to reject them. Westwood VQA and
+TX repairs found through broad all-history searches predate the pinned snapshot.
+The other codec, filter, and platform leads retain their caller, format, frame,
+allocation, or producer contracts. The user-supplied H.264 slice-table and
+`top_borders[-1]` evidence continues to corroborate the existing slice-sentinel
+survivor and is not counted again.
+
+The ADX mechanism raises the totals to 82 confirmed root causes and 71
+dynamically reproduced issues. Coverage is 1,284/4,995 (25.71%), with 3,711
+historically ranked files remaining.
+
+Directly slicing the unchanged deterministic order reproduces ranks 1261–1284
+and their committed manifest and SHA-256 exactly. The next exact-path manifest
+seals ranks 1285–1308 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1285_1308.json` with SHA-256
+`053757224ea45fb70ccc4d2f5ff2ff139334ee7cdf388b98aeb7375943f5dbd2`.
