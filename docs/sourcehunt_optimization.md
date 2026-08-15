@@ -2818,3 +2818,51 @@ reproduces ranks 1165–1188 and their committed manifest and SHA-256 exactly. T
 next unchanged exact-path manifest seals ranks 1189–1212 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1189_1212.json` with SHA-256
 `265b487f7d8a3b7700933f210067d36767f8b8c4199c59965850004c7474c628`.
+
+### Blind wave 1189–1212 and closed arithmetic candidates
+
+The sealed run completed all 24 exact-path trajectories with a successful
+source-bearing action. It used 7,567,837 tokens over 867 model calls, made 215
+candidate/finding calls, performed 28 automatic context compactions, and
+produced no accepted formal findings. The replacement inference endpoint again
+completed without model, tool, or reporting failures.
+
+Offline review found no additional security root. Speex's packet-duration
+arithmetic is deliberately bounded to `INT32_MAX / 256`; even the maximum 255
+Ogg packet segments produce 2,139,094,785, still below `INT32_MAX`. EVC's
+16-bit NAL count can wrap after 65,536 same-type units, but the local count is
+used identically for the reallocation size and write index, so the arrays remain
+memory-safe and only the emitted configuration semantics are affected. H.266's
+lone unchecked two-byte configuration read remains within required input
+padding, while its subsequent byte reads and skips clamp at the logical end.
+AV1 OBU size parsing likewise retains its bitreader and remaining-buffer bounds.
+
+The arbitrary-integer helper has a genuine standalone edge behavior: passing
+the most-negative 128-bit `AVInteger` directly to `av_mod_i` recurses because
+two's-complement negation produces the same value. No untrusted production path
+constructs that value. The old `av_rescale_rnd` big-integer branch is compiled
+out, and AVI's reachable products occupy far fewer than 128 bits. Treat this as
+a malformed public-API caller case rather than an FFmpeg input vulnerability.
+The negative-shift index theory is also safe because both array reads are
+guarded after unsigned conversion.
+
+The remaining memory candidates close under exact allocation or API contracts.
+QOI row offsets fit the validated image linesize; VC-1 and H.265/6 motion
+compensation use padded decoder frames; LJPEG and Rockchip MPP receive encoder
+frames matching the opened context; and monochrome's maximum chroma index is
+exactly `ceil(width / 2^subsampling) - 1`. Threshold uses pixel counts in its
+typed kernels, pad validates geometry before checking backing-buffer extents,
+and Vulkan gblur allocates exactly the shader-visible kernel length. MQ flushes
+at most three bytes into its four-byte pass buffer. ATSC A/53, frame CRC,
+acrossfade, AC-4, Argo CVG, WTV, OpenCL source loading, and hardware-H.264 HRD
+retain their buffer, producer, or option bounds.
+
+Totals remain 71 confirmed root causes and 61 dynamically reproduced issues.
+Coverage is 1,212/4,995 (24.26%), with 3,783 historically ranked files
+remaining.
+
+Directly slicing this machine's unchanged 4,995-file deterministic order
+reproduces ranks 1189–1212 and their committed manifest and SHA-256 exactly. The
+next unchanged exact-path manifest seals ranks 1213–1236 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1213_1236.json` with SHA-256
+`a590597815ced85a491b5f6404b003682d6cefebc5fed84abafb80d6ee8be19b`.
