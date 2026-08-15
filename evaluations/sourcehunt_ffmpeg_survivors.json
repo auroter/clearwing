@@ -2581,5 +2581,555 @@
         "end": 251
       }
     ]
+  },
+  {
+    "case_id": "tdsc-short-raw-tile-overread",
+    "finding": {
+      "id": "ffmpeg-tdsc-short-raw-tile-overread",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavcodec/tdsc.c",
+      "line_number": 439,
+      "severity": "high",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "TD-SC stores the attacker-provided tile_size bytes in an exactly sized heap tilebuffer, but a raw WAR tile is copied according to independent w*3*h geometry. A 64x64 tile with tile_size=4 therefore asks av_image_copy_plane to read 12,288 bytes from four allocated bytes. The production-function harness makes ASan report a 192-byte first-row read beginning exactly after that allocation. Later FFmpeg repair e9e6fb879835a4016b433ad2c4a224f62c686de3 adds the exact missing 3*w*h <= tile_size guard.",
+      "code_snippet": "av_reallocp(&ctx->tilebuffer, tile_size); ... av_image_copy_plane(... ctx->tilebuffer, w * 3, w * 3, h);",
+      "poc": "Build and run evaluations/ffmpeg_tdsc_war_short_tile_reproducer.c with evaluations/run_ffmpeg_tdsc_war_short_tile_reproducer.py against the configured pinned checkout.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "independent raw-tile geometry exceeds the attacker-sized heap tilebuffer and drives a multi-row production copy past it",
+        "steps": [
+          {
+            "file": "libavcodec/tdsc.c",
+            "line": 404,
+            "function": "tdsc_decode_tiles",
+            "code_snippet": "tile_size = bytestream2_get_le32(&ctx->gbc);",
+            "note": "The bitstream independently supplies tile_size and the tile rectangle coordinates."
+          },
+          {
+            "file": "libavcodec/tdsc.c",
+            "line": 426,
+            "function": "tdsc_decode_tiles",
+            "code_snippet": "ret = av_reallocp(&ctx->tilebuffer, tile_size);",
+            "note": "The proof obtains an exact four-byte heap allocation."
+          },
+          {
+            "file": "libavcodec/tdsc.c",
+            "line": 439,
+            "function": "tdsc_decode_tiles",
+            "code_snippet": "av_image_copy_plane(... ctx->tilebuffer, w * 3, w * 3, h);",
+            "note": "The 64x64 raw geometry reads 192 bytes on its first row and 12,288 overall; ASan aborts at the four-byte allocation boundary."
+          },
+          {
+            "file": "libavcodec/tdsc.c",
+            "line": 438,
+            "function": "tdsc_decode_tiles",
+            "code_snippet": "if (3LL * w * h > tile_size) return AVERROR_INVALIDDATA;",
+            "note": "Later repair e9e6fb879835a4016b433ad2c4a224f62c686de3 adds this exact geometry-to-allocation check."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/tdsc.c",
+        "start": 385,
+        "end": 450
+      }
+    ]
+  },
+  {
+    "case_id": "tdsc-jpeg-dimension-mismatch-overread",
+    "finding": {
+      "id": "ffmpeg-tdsc-jpeg-dimension-mismatch-overread",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavcodec/tdsc.c",
+      "line_number": 373,
+      "severity": "high",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "A compressed TD-SC tile carries rectangle dimensions independently of the embedded JPEG. After decoding, the vulnerable path checks only the JPEG pixel format and passes the larger tile width and height to tdsc_blit. A claimed 64x64 tile backed by a 1x1 decoded image reads beyond the JPEG planes; ASan reports a one-byte heap overread exactly after the one-byte luma allocation. Later repair bb69a090a7cad34e21c645c8bcedbdd4ed92db5b rejects w or h larger than the decoded JPEG.",
+      "code_snippet": "if (ret < 0 || ctx->jpgframe->format != AV_PIX_FMT_YUVJ420P) ... tdsc_blit(... ctx->jpgframe->data[0], ... w, h);",
+      "poc": "Run the jpeg scenario in evaluations/ffmpeg_tdsc_additional_reproducers.c with evaluations/run_ffmpeg_tdsc_additional_reproducers.py.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "attacker-declared tile dimensions exceed the decoded JPEG planes and are used unchanged by the pixel conversion loop",
+        "steps": [
+          {
+            "file": "libavcodec/tdsc.c",
+            "line": 360,
+            "function": "tdsc_decode_jpeg_tile",
+            "code_snippet": "ret = avcodec_receive_frame(ctx->jpeg_avctx, ctx->jpgframe);",
+            "note": "The nested decoder determines the actual JPEG plane dimensions."
+          },
+          {
+            "file": "libavcodec/tdsc.c",
+            "line": 361,
+            "function": "tdsc_decode_jpeg_tile",
+            "code_snippet": "if (ret < 0 || ctx->jpgframe->format != AV_PIX_FMT_YUVJ420P)",
+            "note": "No vulnerable-snapshot comparison relates the decoded dimensions to w and h."
+          },
+          {
+            "file": "libavcodec/tdsc.c",
+            "line": 373,
+            "function": "tdsc_decode_jpeg_tile",
+            "code_snippet": "tdsc_blit(... ctx->jpgframe->data[0], ... w, h);",
+            "note": "The 64x64 production loop walks a 1x1 luma plane and ASan stops at its first out-of-allocation byte."
+          },
+          {
+            "file": "libavcodec/tdsc.c",
+            "line": 361,
+            "function": "tdsc_decode_jpeg_tile",
+            "code_snippet": "w > ctx->jpgframe->width || h > ctx->jpgframe->height",
+            "note": "Later repair bb69a090a7cad34e21c645c8bcedbdd4ed92db5b adds the missing decoded-size guard."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/tdsc.c",
+        "start": 320,
+        "end": 382
+      }
+    ]
+  },
+  {
+    "case_id": "tdsc-mono-cursor-double-stride-overwrite",
+    "finding": {
+      "id": "ffmpeg-tdsc-mono-cursor-double-stride-overwrite",
+      "finding_type": "out_of_bounds_write",
+      "cwe": "CWE-787",
+      "file": "libavcodec/tdsc.c",
+      "line_number": 238,
+      "severity": "high",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "For monochrome cursors, each 32-pixel chunk loop already advances dst by the complete aligned cursor_stride. The vulnerable code then adds cursor_stride - cursor_w*4 a second time at each row. A valid 1x2 cursor allocates 256 bytes, advances the second row to offset 252, and writes its second pixel at offset 256. ASan reports a one-byte heap overflow exactly after the allocation. Later repair 242ff799c75f20bade946314c8d741d0887ee11c removes the two redundant MONO stride adjustments.",
+      "code_snippet": "for (i = 0; i < ctx->cursor_w; i += 32) { ... for (k = 0; k < 32; k++) { dst[0] = ...; dst += 4; } } dst += ctx->cursor_stride - ctx->cursor_w * 4;",
+      "poc": "Run the cursor scenario in evaluations/ffmpeg_tdsc_additional_reproducers.c with evaluations/run_ffmpeg_tdsc_additional_reproducers.py.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "an aligned 32-pixel inner loop consumes a full row, then an extra row adjustment moves the next cursor row beyond its allocation",
+        "steps": [
+          {
+            "file": "libavcodec/tdsc.c",
+            "line": 200,
+            "function": "tdsc_load_cursor",
+            "code_snippet": "ctx->cursor_stride = FFALIGN(ctx->cursor_w, 32) * 4;",
+            "note": "A width-one cursor has a 128-byte aligned row and a two-row allocation of 256 bytes."
+          },
+          {
+            "file": "libavcodec/tdsc.c",
+            "line": 238,
+            "function": "tdsc_load_cursor",
+            "code_snippet": "dst[0] = !!(bits & 0x80000000); dst += 4;",
+            "note": "The 32-iteration inner loop already advances exactly 128 bytes for every row."
+          },
+          {
+            "file": "libavcodec/tdsc.c",
+            "line": 243,
+            "function": "tdsc_load_cursor",
+            "code_snippet": "dst += ctx->cursor_stride - ctx->cursor_w * 4;",
+            "note": "The extra 124-byte advance positions the second row so its second pixel crosses the allocation; ASan confirms the write."
+          },
+          {
+            "file": "libavcodec/tdsc.c",
+            "line": 243,
+            "function": "tdsc_load_cursor",
+            "code_snippet": "/* redundant adjustment removed */",
+            "note": "Later repair 242ff799c75f20bade946314c8d741d0887ee11c deletes both redundant adjustments."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/tdsc.c",
+        "start": 188,
+        "end": 310
+      }
+    ]
+  },
+  {
+    "case_id": "tdsc-truncated-tile-uninitialized-disclosure",
+    "finding": {
+      "id": "ffmpeg-tdsc-truncated-tile-uninitialized-disclosure",
+      "finding_type": "information_disclosure",
+      "cwe": "CWE-200",
+      "file": "libavcodec/tdsc.c",
+      "line_number": 405,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "TD-SC checks tile_size against all bytes remaining after the size field, but then consumes another 24-byte tile header before copying the payload. With tile_size=24 and exactly the 24 header bytes remaining, the check succeeds, no payload bytes are copied into the newly allocated tilebuffer, and a 24-byte raw tile publishes that uninitialized heap content into the reference frame. ASan allocator fill makes all 24 disclosed bytes deterministically observable. Later repair bf4eb194cfd35c65d523685d35168d7107394e9c adds the missing 24 header bytes to the check.",
+      "code_snippet": "if (bytestream2_get_bytes_left(&ctx->gbc) < tile_size) return ...; ... bytestream2_get_buffer(&ctx->gbc, ctx->tilebuffer, tile_size);",
+      "poc": "Run the truncated scenario in evaluations/ffmpeg_tdsc_additional_reproducers.c with evaluations/run_ffmpeg_tdsc_additional_reproducers.py and ASan malloc_fill_byte=165.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a payload-size check counts the following header as payload, leaving an allocated raw tile uninitialized before it is copied into decoded pixels",
+        "steps": [
+          {
+            "file": "libavcodec/tdsc.c",
+            "line": 405,
+            "function": "tdsc_decode_tiles",
+            "code_snippet": "if (bytestream2_get_bytes_left(&ctx->gbc) < tile_size)",
+            "note": "The 24-byte nominal payload passes because exactly 24 bytes of tile header remain."
+          },
+          {
+            "file": "libavcodec/tdsc.c",
+            "line": 408,
+            "function": "tdsc_decode_tiles",
+            "code_snippet": "tile_mode = ...; ... x = ...; y = ...; x2 = ...; y2 = ...;",
+            "note": "These fields consume the entire remaining input before payload extraction."
+          },
+          {
+            "file": "libavcodec/tdsc.c",
+            "line": 430,
+            "function": "tdsc_decode_tiles",
+            "code_snippet": "bytestream2_get_buffer(&ctx->gbc, ctx->tilebuffer, tile_size);",
+            "note": "The bounded getter copies zero bytes, leaving all 24 allocated bytes at the deterministic allocator fill value."
+          },
+          {
+            "file": "libavcodec/tdsc.c",
+            "line": 405,
+            "function": "tdsc_decode_tiles",
+            "code_snippet": "bytestream2_get_bytes_left(&ctx->gbc) < tile_size + 24LL",
+            "note": "Later repair bf4eb194cfd35c65d523685d35168d7107394e9c accounts for the full tile header."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/tdsc.c",
+        "start": 390,
+        "end": 445
+      }
+    ]
+  },
+  {
+    "case_id": "tdsc-resize-stale-linesize-overwrite",
+    "finding": {
+      "id": "ffmpeg-tdsc-resize-stale-linesize-overwrite",
+      "finding_type": "out_of_bounds_write",
+      "cwe": "CWE-787",
+      "file": "libavcodec/tdsc.c",
+      "line_number": 487,
+      "severity": "high",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "On a TD-SC size change, the vulnerable path changes refframe width and height and calls av_frame_get_buffer without first unreferencing the old frame. The allocator therefore reuses the old nonzero linesize when sizing the new backing buffer. Resizing a 1x1 BGR24 frame to 256x32 retains a 96-byte stride, allocates 3,328 bytes, and lets tdsc_blit write through byte 3,743. ASan reports a one-byte heap overflow at the allocation end. Later repair fd3ee52fab34d98a95b787d0b5ff45685766200c unreferences the frame and then establishes the new format and dimensions before allocation.",
+      "code_snippet": "ctx->refframe->width = ... = w; ctx->refframe->height = ... = h; if (init_refframe) av_frame_get_buffer(ctx->refframe, 0);",
+      "poc": "Run the resize scenario in evaluations/ffmpeg_tdsc_additional_reproducers.c with evaluations/run_ffmpeg_tdsc_additional_reproducers.py.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "frame dimensions grow while an old linesize survives, so the new allocation remains narrow and the JPEG conversion writes beyond it",
+        "steps": [
+          {
+            "file": "libavutil/frame.c",
+            "line": 91,
+            "function": "get_video_buffer",
+            "code_snippet": "if (!frame->linesize[0]) { av_image_fill_linesizes(...); }",
+            "note": "A nonzero linesize is treated as caller-supplied and is not recomputed for new geometry."
+          },
+          {
+            "file": "libavcodec/tdsc.c",
+            "line": 482,
+            "function": "tdsc_parse_tdsf",
+            "code_snippet": "ctx->refframe->width = ctx->width = w; ctx->refframe->height = ctx->height = h;",
+            "note": "The vulnerable resize mutates dimensions but preserves the old frame state."
+          },
+          {
+            "file": "libavcodec/tdsc.c",
+            "line": 487,
+            "function": "tdsc_parse_tdsf",
+            "code_snippet": "ret = av_frame_get_buffer(ctx->refframe, 0);",
+            "note": "The proof retains a 96-byte old stride and receives a 3,328-byte allocation for 256x32 output."
+          },
+          {
+            "file": "libavcodec/tdsc.c",
+            "line": 373,
+            "function": "tdsc_blit",
+            "code_snippet": "tdsc_blit(... ctx->refframe->linesize[0], ... w, h);",
+            "note": "BGR conversion writes 768 bytes per row through the stale 96-byte stride and ASan catches the overrun."
+          },
+          {
+            "file": "libavcodec/tdsc.c",
+            "line": 486,
+            "function": "tdsc_parse_tdsf",
+            "code_snippet": "av_frame_unref(ctx->refframe);",
+            "note": "Later repair fd3ee52fab34d98a95b787d0b5ff45685766200c clears stale frame allocation state before resizing."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/tdsc.c",
+        "start": 455,
+        "end": 494
+      },
+      {
+        "path": "libavutil/frame.c",
+        "start": 75,
+        "end": 130
+      }
+    ]
+  },
+  {
+    "case_id": "tdsc-cursor-position-signed-overflow",
+    "finding": {
+      "id": "ffmpeg-tdsc-cursor-position-signed-overflow",
+      "finding_type": "denial_of_service",
+      "cwe": "CWE-190",
+      "file": "libavcodec/tdsc.c",
+      "line_number": 157,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "TD-SC cursor coordinates come directly from signed 32-bit bitstream fields. Cursor-only update action 2 bypasses the load-time position check, and tdsc_paint_cursor adds cursor width before rejecting or clipping the coordinate. cursor_x=INT_MAX with a one-pixel cursor therefore evaluates INT_MAX+1 in signed int. UBSan reports the overflow and aborts before the wrapped coordinate can feed destination pointer arithmetic and pixel writes. Later repair 8de8405796df0c11c52772dd14bf6ed552d25c07 moves an unsigned frame-bound check into tdsc_paint_cursor before the arithmetic.",
+      "code_snippet": "int x = ctx->cursor_x - ctx->cursor_hot_x; ... if (x + w > ctx->width) ... dst += x * 3;",
+      "poc": "Run the position scenario in evaluations/ffmpeg_tdsc_additional_reproducers.c with evaluations/run_ffmpeg_tdsc_additional_reproducers.py under UBSan.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "an unbounded signed cursor position overflows clip arithmetic before it is used to derive the output pointer",
+        "steps": [
+          {
+            "file": "libavcodec/tdsc.c",
+            "line": 506,
+            "function": "tdsc_parse_dtsm",
+            "code_snippet": "ctx->cursor_x = bytestream2_get_le32(&ctx->gbc);",
+            "note": "Action 2 updates the position without calling tdsc_load_cursor's older validation."
+          },
+          {
+            "file": "libavcodec/tdsc.c",
+            "line": 157,
+            "function": "tdsc_paint_cursor",
+            "code_snippet": "if (x + w > ctx->width)",
+            "note": "INT_MAX plus width one overflows; UBSan reports the exact operation."
+          },
+          {
+            "file": "libavcodec/tdsc.c",
+            "line": 165,
+            "function": "tdsc_paint_cursor",
+            "code_snippet": "dst += x * 3;",
+            "note": "Without sanitizer termination, wrapped clip state feeds destination pointer arithmetic and the following pixel writes."
+          },
+          {
+            "file": "libavcodec/tdsc.c",
+            "line": 154,
+            "function": "tdsc_paint_cursor",
+            "code_snippet": "if ((unsigned)ctx->cursor_x >= ctx->width || (unsigned)ctx->cursor_y >= ctx->height) return;",
+            "note": "Later repair 8de8405796df0c11c52772dd14bf6ed552d25c07 rejects negative and out-of-frame positions before subtraction and addition."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/tdsc.c",
+        "start": 140,
+        "end": 186
+      },
+      {
+        "path": "libavcodec/tdsc.c",
+        "start": 496,
+        "end": 520
+      }
+    ]
+  },
+  {
+    "case_id": "raw-rgb-stride-overflow-write",
+    "finding": {
+      "id": "ffmpeg-raw-rgb-stride-overflow-write",
+      "finding_type": "out_of_bounds_write",
+      "cwe": "CWE-190",
+      "file": "libavformat/rawutils.c",
+      "line_number": 60,
+      "severity": "high",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "AVI and MOV derive an int expected_stride from public raw-video width and bit depth, and ff_reshuffle_raw_rgb multiplies that stride by height in int when allocating a destination packet. Width 477,218,589 at 24 bits yields stride 1,431,655,768; three rows wrap the packet payload to eight bytes, while row offsets and padding length retain the large stride. With a valid 216-byte source, ASan reports a 1,431,655,696-byte memset beginning exactly after the eight-byte payload and mandatory 64-byte padding allocation. Later repair d3ad8a7fee6a647c6362e4a105d949282d50a98f widens min_stride and rejects products that cannot fit an AVPacket.",
+      "code_snippet": "av_new_packet(new_pkt, expected_stride * par->height); ... memset(new_pkt->data + y*expected_stride + expected_stride - padding, 0, padding);",
+      "poc": "Build and run evaluations/ffmpeg_raw_rgb_stride_overflow_reproducer.c with evaluations/run_ffmpeg_raw_rgb_stride_overflow_reproducer.py.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a public raw-video stride times height wraps the destination allocation while unwrapped stride arithmetic drives a massive padding write",
+        "steps": [
+          {
+            "file": "libavformat/avienc.c",
+            "line": 790,
+            "function": "avi_write_packet",
+            "code_snippet": "int expected_stride = ((par->width * bpc + 31) >> 5)*4;",
+            "note": "The proof's public width and 24-bit depth produce a positive 1,431,655,768-byte int stride."
+          },
+          {
+            "file": "libavformat/rawutils.c",
+            "line": 50,
+            "function": "ff_reshuffle_raw_rgb",
+            "code_snippet": "av_new_packet(new_pkt, expected_stride * par->height);",
+            "note": "Three rows overflow the int product to an eight-byte logical packet, which has a 72-byte padded heap allocation."
+          },
+          {
+            "file": "libavformat/rawutils.c",
+            "line": 60,
+            "function": "ff_reshuffle_raw_rgb",
+            "code_snippet": "memset(new_pkt->data + y*expected_stride + expected_stride - padding, 0, padding);",
+            "note": "The retained padding length is 1,431,655,696 bytes; ASan reports the write at the end of the 72-byte padded allocation."
+          },
+          {
+            "file": "libavformat/rawutils.c",
+            "line": 35,
+            "function": "ff_reshuffle_raw_rgb",
+            "code_snippet": "expected_stride > (INT_MAX - AV_INPUT_BUFFER_PADDING_SIZE) / par->height",
+            "note": "Later repair d3ad8a7fee6a647c6362e4a105d949282d50a98f rejects precisely the nonrepresentable destination size."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/rawutils.c",
+        "start": 25,
+        "end": 68
+      },
+      {
+        "path": "libavformat/avienc.c",
+        "start": 780,
+        "end": 798
+      }
+    ]
+  },
+  {
+    "case_id": "varblur-unit-geometry-division-zero",
+    "finding": {
+      "id": "ffmpeg-varblur-unit-geometry-division-zero",
+      "finding_type": "denial_of_service",
+      "cwe": "CWE-369",
+      "file": "libavfilter/vf_varblur.c",
+      "line_number": 203,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "Varblur accepts one-pixel video geometry. At x=0,y=0 in a 1x1 plane, every left, right, top, and bottom radius is clamped to zero. Both summed-area spans are therefore zero, but the integer 8-bit and 16-bit blur variants divide by div and ndiv without a zero check. A direct production-function harness reaches the valid 1x1 8-bit path and UBSan aborts on division by zero.",
+      "code_snippet": "stype div = (l + r) * (t + b); stype ndiv = (nl + nr) * (nt + nb); stype p0 = (...) / div;",
+      "poc": "Build and run evaluations/ffmpeg_varblur_unit_geometry_reproducer.c with evaluations/run_ffmpeg_varblur_unit_geometry_reproducer.py under UBSan.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "valid unit geometry collapses both radius spans to zero and the integer blur implementation divides by their product",
+        "steps": [
+          {
+            "file": "libavfilter/vf_varblur.c",
+            "line": 167,
+            "function": "blur_plane8",
+            "code_snippet": "const int l = FFMIN(radius, x); const int r = FFMIN(radius, w - x - 1);",
+            "note": "For x=0 and w=1 both horizontal extents are zero, regardless of the radius frame."
+          },
+          {
+            "file": "libavfilter/vf_varblur.c",
+            "line": 169,
+            "function": "blur_plane8",
+            "code_snippet": "const int t = FFMIN(radius, y); const int b = FFMIN(radius, h - y - 1);",
+            "note": "The one-row vertical extents are also both zero."
+          },
+          {
+            "file": "libavfilter/vf_varblur.c",
+            "line": 183,
+            "function": "blur_plane8",
+            "code_snippet": "stype div = (l + r) * (t + b);",
+            "note": "The divisor is exactly zero and no guard changes it."
+          },
+          {
+            "file": "libavfilter/vf_varblur.c",
+            "line": 185,
+            "function": "blur_plane8",
+            "code_snippet": "stype p0 = (br + tl - bl - tr) / div;",
+            "note": "UBSan reports division by zero in the production 8-bit function and aborts."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/vf_varblur.c",
+        "start": 135,
+        "end": 205
+      },
+      {
+        "path": "libavfilter/vf_varblur.c",
+        "start": 300,
+        "end": 385
+      }
+    ]
+  },
+  {
+    "case_id": "atadenoise-alpha-plane-null-state",
+    "finding": {
+      "id": "ffmpeg-atadenoise-alpha-plane-null-state",
+      "finding_type": "denial_of_service",
+      "cwe": "CWE-476",
+      "file": "libavfilter/vf_atadenoise.c",
+      "line_number": 365,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "Atadenoise advertises four-plane YUVA and GBRA formats and accepts a public plane mask through bit three. It sets nb_planes from all format components and filter_slice iterates them, but temporal queue population copies data and linesizes only for planes zero through two. Selecting the alpha plane therefore constructs temporal source pointers from zero-initialized null entries. The production callback harness uses valid YUVA444P geometry with the alpha-only mask; UBSan diagnoses the null-pointer arithmetic, execution continues into fweight_row8, and ASan aborts on its zero-page read.",
+      "code_snippet": "s->data[0][i] = frame->data[0]; s->data[1][i] = frame->data[1]; s->data[2][i] = frame->data[2]; ... srcf[i] = data[i] + slice_start * linesize[i];",
+      "poc": "Build and run evaluations/ffmpeg_atadenoise_alpha_plane_reproducer.c with evaluations/run_ffmpeg_atadenoise_alpha_plane_reproducer.py.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "the filter exposes alpha selection and iterates four planes, but its temporal queue never stores alpha pointers before dereferencing them",
+        "steps": [
+          {
+            "file": "libavfilter/vf_atadenoise.c",
+            "line": 105,
+            "function": "format configuration",
+            "code_snippet": "AV_PIX_FMT_YUVA444P ... AV_PIX_FMT_GBRAP",
+            "note": "The filter explicitly negotiates four-plane alpha-bearing formats."
+          },
+          {
+            "file": "libavfilter/vf_atadenoise.c",
+            "line": 388,
+            "function": "config_input",
+            "code_snippet": "s->nb_planes = desc->nb_components;",
+            "note": "YUVA444P configures four iterations, and the public p option accepts alpha bit 8."
+          },
+          {
+            "file": "libavfilter/vf_atadenoise.c",
+            "line": 476,
+            "function": "filter_frame",
+            "code_snippet": "s->data[0][i] = frame->data[0]; ... s->data[2][i] = frame->data[2];",
+            "note": "Neither data[3][i] nor linesize[3][i] is populated for any queued frame."
+          },
+          {
+            "file": "libavfilter/vf_atadenoise.c",
+            "line": 365,
+            "function": "filter_slice",
+            "code_snippet": "srcf[i] = data[i] + slice_start * linesize[i];",
+            "note": "On selected plane three, data[i] is null; UBSan reports the invalid null-pointer arithmetic and aborts before the row dereference."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/vf_atadenoise.c",
+        "start": 75,
+        "end": 125
+      },
+      {
+        "path": "libavfilter/vf_atadenoise.c",
+        "start": 338,
+        "end": 430
+      },
+      {
+        "path": "libavfilter/vf_atadenoise.c",
+        "start": 455,
+        "end": 490
+      }
+    ]
   }
 ]

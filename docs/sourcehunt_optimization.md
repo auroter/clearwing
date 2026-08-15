@@ -2715,3 +2715,106 @@ reproduces ranks 1141–1164 and their committed manifest and SHA-256 exactly. T
 next unchanged exact-path manifest seals ranks 1165–1188 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1165_1188.json` with SHA-256
 `36e2ad7ac4bd3b845540da599e13e3bb11be36b0a6f78029ded6e1e62cf9bf61`.
+
+### Blind wave 1165–1188 and nine dynamically confirmed roots
+
+The sealed run completed all 24 exact-path trajectories with a successful
+source-bearing action. It used 7,730,121 tokens over 834 model calls, made 221
+candidate/finding calls, performed 25 automatic context compactions, and
+produced no accepted formal findings. The replacement inference endpoint again
+completed without model, tool, or reporting failures.
+
+Offline review confirmed six independent TD-SC roots. Raw `WAR` tiles allocate
+exactly the attacker-provided `tile_size` but copy `w * 3 * h` bytes; a 64x64
+tile backed by four bytes produces a 192-byte ASan read exactly after the
+allocation. Compressed tiles likewise trust the outer tile dimensions after
+decoding an independently sized JPEG; a claimed 64x64 tile over a 1x1 JPEG
+produces a one-byte ASan read immediately after the luma plane. Later repairs
+`e9e6fb879835a4016b433ad2c4a224f62c686de3` and
+`bb69a090a7cad34e21c645c8bcedbdd4ed92db5b` add the exact missing raw-size and
+decoded-JPEG-dimension guards.
+
+TD-SC's monochrome cursor loop advances by a complete aligned row and then
+applies the row padding a second time. A valid 1x2 cursor writes its second
+pixel exactly after a 256-byte allocation; later repair
+`242ff799c75f20bade946314c8d741d0887ee11c` removes both redundant advances.
+The tile-size check also counts the following 24-byte tile header as payload.
+A 24-byte nominal raw tile containing only that header leaves its 24-byte heap
+buffer untouched, and ASan allocator fill is copied verbatim into decoded
+pixels. Repair `bf4eb194cfd35c65d523685d35168d7107394e9c` adds those 24 bytes to
+the input bound.
+
+Two state-transition bugs complete the TD-SC set. Resizing an existing 1x1
+BGR24 reference frame to 256x32 without unreferencing it preserves a 96-byte
+linesize, allocates only 3,328 bytes, and lets the pixel conversion write
+through byte 3,743. ASan catches the first byte beyond the allocation; repair
+`fd3ee52fab34d98a95b787d0b5ff45685766200c` clears the stale frame state before
+reallocation. Separately, a cursor-only update accepts `INT_MAX` as its x
+position and overflows `x + w` before clipping. UBSan reproduces the signed
+overflow, while repair `8de8405796df0c11c52772dd14bf6ed552d25c07` moves an
+unsigned frame-bound check ahead of the arithmetic.
+
+The raw-RGB reshuffler adds a seventh memory-corruption root. AVI's public width
+and bit-depth formula can produce a 1,431,655,768-byte row; multiplying by
+three rows wraps the destination payload to eight bytes while all row offsets
+and the padding length keep the large stride. With a 216-byte source packet,
+ASan reports a 1,431,655,696-byte write beginning exactly after the eight-byte
+payload and mandatory 64-byte packet padding. Later repair
+`d3ad8a7fee6a647c6362e4a105d949282d50a98f` widens the intermediate and rejects
+products that cannot fit an `AVPacket`.
+
+Review also found two still-unfixed filter crashes. Varblur accepts 1x1 integer
+planes, where every clamped horizontal and vertical span is zero; its
+summed-area calculation divides by the zero span, and UBSan aborts in
+`blur_plane8`. Atadenoise advertises four-plane alpha formats and accepts alpha
+bit 8 in its public plane mask, but queue population stores only planes zero
+through two. Selecting alpha therefore forms temporal pointers from null queue
+entries. UBSan diagnoses the null-pointer arithmetic, execution continues into
+the production `fweight_row8` callback, and ASan aborts on its zero-page read.
+
+The durable artifacts are
+`evaluations/ffmpeg_tdsc_war_short_tile_reproducer.c`,
+`evaluations/run_ffmpeg_tdsc_war_short_tile_reproducer.py`,
+`evaluations/ffmpeg_tdsc_additional_reproducers.c`,
+`evaluations/run_ffmpeg_tdsc_additional_reproducers.py`,
+`evaluations/ffmpeg_raw_rgb_stride_overflow_reproducer.c`,
+`evaluations/run_ffmpeg_raw_rgb_stride_overflow_reproducer.py`,
+`evaluations/ffmpeg_varblur_unit_geometry_reproducer.c`,
+`evaluations/run_ffmpeg_varblur_unit_geometry_reproducer.py`,
+`evaluations/ffmpeg_atadenoise_alpha_plane_reproducer.c`, and
+`evaluations/run_ffmpeg_atadenoise_alpha_plane_reproducer.py`. Their ignored
+proof records under `results/sourcehunt-optimization/` all record
+`expected_observed=true` at pinned FFmpeg commit
+`795bccdaf57772b1803914dee2f32d52776518e2`.
+
+The XBM and V408 formal attempts do not survive adjudication. XBM's one- and
+two-byte logical reads remain within the mandatory zeroed
+`AV_INPUT_BUFFER_PADDING_SIZE` packet tail and then reject the input. V408's
+apparent `4 * width * height` overflow is precluded by
+`av_image_check_size2`, whose conservative eight-byte stride bound keeps the
+product representable before decoder entry. The generic unchecked bitreader is
+likewise an intentional configured contract rather than a standalone root;
+the prior CLLC result is the concrete caller that violates it.
+
+The remaining candidates close under producer or allocation invariants.
+Speex sizes both header and encoded copies from the same library results; VP8
+edge filters operate on padded decoder frames; SBC's bounded block/subband
+state keeps its wrap buffer valid; and Sun Raster's doubled RLE allocation
+covers the two-byte worst case. E-AC-3 exponent and channel domains fit their
+tables, while Vulkan AV1 reference indices are syntax-bounded. Fieldorder and
+hflip copy only active row bytes through valid frame linesizes; shear clamps
+all sampled coordinates; VAAPI transpose swaps dimensions for every rotating
+mode; and QR padding cannot be smaller than its rendered code. Removelogo,
+freezedetect, Argo BRP, ISOM descriptors, swscale component tables, CYUV, and
+the remaining codec paths retain their explicit geometry, descriptor, or
+packet bounds.
+
+The nine mechanisms add distinct roots. Current totals are 71 confirmed
+root causes and 61 dynamically reproduced issues. Coverage is 1,188/4,995
+(23.78%), with 3,807 historically ranked files remaining.
+
+Directly slicing this machine's unchanged 4,995-file deterministic order
+reproduces ranks 1165–1188 and their committed manifest and SHA-256 exactly. The
+next unchanged exact-path manifest seals ranks 1189–1212 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1189_1212.json` with SHA-256
+`265b487f7d8a3b7700933f210067d36767f8b8c4199c59965850004c7474c628`.
