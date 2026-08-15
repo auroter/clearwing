@@ -3920,5 +3920,91 @@
         "end": 247
       }
     ]
+  },
+  {
+    "case_id": "opt-binary-array-element-overflow",
+    "finding": {
+      "id": "ffmpeg-opt-binary-array-element-overflow",
+      "finding_type": "out_of_bounds_write",
+      "cwe": "CWE-787",
+      "file": "libavutil/opt.c",
+      "line_number": 365,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The public AVOption API documents AV_OPT_TYPE_FLAG_ARRAY as combinable with regular option types, including binary. A scalar binary value occupies a pointer immediately followed by an int byte length, but opt_type_desc sizes each binary array element as only sizeof(uint8_t *). av_opt_set therefore allocates one eight-byte slot for a one-element binary array and dispatches its hexadecimal element to set_string_binary, which writes the four-byte length through dst + 1 at offset eight. The public API proof aborts under ASan on a four-byte heap write exactly at the end of the eight-byte allocation. No in-tree binary-array descriptor currently exists, so exploitation requires an API consumer to expose the documented type combination.",
+      "code_snippet": "[AV_OPT_TYPE_BINARY] = { sizeof(uint8_t *), ... }; ... int *lendst = (int *)(dst + 1); ... *lendst = 0;",
+      "poc": "Build and run evaluations/ffmpeg_opt_binary_array_reproducer.c with evaluations/run_ffmpeg_opt_binary_array_reproducer.py.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a documented binary-array element is allocated as one pointer but written as a pointer-plus-length scalar",
+        "steps": [
+          {
+            "file": "libavutil/opt.h",
+            "line": 338,
+            "function": "AV_OPT_TYPE_FLAG_ARRAY documentation",
+            "code_snippet": "May be combined with another regular option type to declare an array option.",
+            "note": "The public contract permits the proof's binary-plus-array descriptor; no exclusion for AV_OPT_TYPE_BINARY is documented or enforced."
+          },
+          {
+            "file": "libavutil/opt.h",
+            "line": 282,
+            "function": "AV_OPT_TYPE_BINARY documentation",
+            "code_snippet": "Underlying C type is a uint8_t* ... immediately followed by an int containing the array length in bytes.",
+            "note": "Every scalar binary setter requires storage for both fields."
+          },
+          {
+            "file": "libavutil/opt.c",
+            "line": 74,
+            "function": "opt_type_desc",
+            "code_snippet": "[AV_OPT_TYPE_BINARY] = { sizeof(uint8_t *), \"<binary>\" },",
+            "note": "The generic array machinery nevertheless treats a complete binary element as pointer-sized."
+          },
+          {
+            "file": "libavutil/opt.c",
+            "line": 788,
+            "function": "opt_set_array",
+            "code_snippet": "tmp = av_realloc_array(elems, nb_elems + 1, elem_size);",
+            "note": "For the proof's single element on a 64-bit host, this allocates exactly eight bytes."
+          },
+          {
+            "file": "libavutil/opt.c",
+            "line": 798,
+            "function": "opt_set_array",
+            "code_snippet": "ret = opt_set_elem(obj, target_obj, o, str, tmp);",
+            "note": "The string-array path dispatches the hexadecimal element to the ordinary binary scalar setter with the undersized slot."
+          },
+          {
+            "file": "libavutil/opt.c",
+            "line": 365,
+            "function": "set_string_binary",
+            "code_snippet": "int *lendst = (int *)(dst + 1); ... *lendst = 0;",
+            "note": "The first length initialization writes four bytes at offset eight; ASan reports the exact heap-buffer-overflow before parsing the one-byte value."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavutil/opt.h",
+        "start": 243,
+        "end": 347
+      },
+      {
+        "path": "libavutil/opt.c",
+        "start": 61,
+        "end": 84
+      },
+      {
+        "path": "libavutil/opt.c",
+        "start": 348,
+        "end": 390
+      },
+      {
+        "path": "libavutil/opt.c",
+        "start": 670,
+        "end": 836
+      }
+    ]
   }
 ]

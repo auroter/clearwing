@@ -3070,3 +3070,51 @@ and their committed manifest and SHA-256 exactly. The next exact-path manifest
 seals ranks 1285–1308 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1285_1308.json` with SHA-256
 `053757224ea45fb70ccc4d2f5ff2ff139334ee7cdf388b98aeb7375943f5dbd2`.
+
+### Blind wave 1285–1308 and the AVOption binary-array overflow
+
+The wave achieved successful source work on all 24 exact paths across an
+interrupted 19-path initial session and a five-path retry. Together they used
+6,649,848 tokens over 731 settled model calls and made 172 candidate/finding
+calls. The endpoint recovered from shorter connection and read timeouts, but
+three long in-flight requests required cancellation after their paths had
+already completed source-bearing actions. No formal finding was accepted by the
+online scaffold.
+
+Offline review confirmed one new public-API memory-corruption root. The AVOption
+header documents its array flag as combinable with regular option types, while a
+binary scalar is defined as a pointer immediately followed by an integer byte
+length. The implementation nevertheless sizes every binary array element as
+only `sizeof(uint8_t *)`. A public `av_opt_set` call on one hexadecimal binary
+element allocates an eight-byte slot and dispatches it to `set_string_binary`,
+whose first length initialization writes four bytes at offset eight. ASan
+reports the write exactly zero bytes past that allocation at `opt.c:365`.
+No in-tree binary-array option currently exists, so the finding's scope is an
+API consumer that exposes this documented descriptor combination.
+
+The durable artifacts are
+`evaluations/ffmpeg_opt_binary_array_reproducer.c` and
+`evaluations/run_ffmpeg_opt_binary_array_reproducer.py`. The ignored proof
+record reports `expected_observed=true` at pinned FFmpeg commit
+`795bccdaf57772b1803914dee2f32d52776518e2`, with all source and runtime
+predicates true.
+
+The campaign also independently rediscovered the ARLS order-17 heap under-read,
+including its exact `17 -> 32` alignment and `coeffs - 14` source. That root and
+its public graph proof were already recorded in ranks 949–972, so it is not
+counted again. Other terminal candidates close under exact contracts: XSUB
+resets its bitmap pointer between even and odd interlaced fields rather than
+adding an extra row; QDraw's non-pixmap palette index guard rejects values above
+255; the merge-sort tail selects whichever run remains without leaving its
+range; and resampler, parser, frame, hardware, and DSP paths retain their
+caller, allocation, or producer bounds.
+
+The AVOption mechanism raises the totals to 83 confirmed root causes and 72
+dynamically reproduced issues. Coverage is 1,308/4,995 (26.19%), with 3,687
+historically ranked files remaining.
+
+Directly slicing the unchanged deterministic order reproduces ranks 1285–1308
+and their committed manifest and SHA-256 exactly. The next exact-path manifest
+seals ranks 1309–1332 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1309_1332.json` with SHA-256
+`7d251fab475e3490cc8bf4ac39449df05af17a1f6aabeba7cac6c343178651b6`.
