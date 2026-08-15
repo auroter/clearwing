@@ -2949,3 +2949,75 @@ reproduces ranks 1213–1236 and their committed manifest and SHA-256 exactly. T
 next unchanged exact-path manifest seals ranks 1237–1260 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1237_1260.json` with SHA-256
 `eba7617217a4b9ca6db6cca4007efc677d8f926821b69ea75be07e02fd995a96`.
+
+### Blind wave 1237–1260 and four confirmed resource/memory roots
+
+The wave completed all 24 exact-path trajectories across an interrupted initial
+run and a 19-path retry. Five completed paths from the first run were preserved.
+Together the runs used 7,924,804 tokens over 877 model calls, made 199
+candidate/finding calls, performed 27 automatic context compactions, and
+produced no accepted formal findings. One transport stall caused the split; the
+replacement inference endpoint otherwise completed every remaining path.
+
+Offline review confirmed a remotely reachable RTP/JPEG stack overwrite. A
+start packet with `q=255` may carry 1,024 table bytes, which the parser converts
+to sixteen quantization tables while building a JPEG header in
+`uint8_t hdr[1024]`. Checked writes saturate at the end of `hdr`, but the raw
+DHT-length backpatch then writes two bytes through the one-past-end pointer. The
+complete production parser aborts under ASan. Later repair `d84bec2bd6` caps the input at
+four 64-byte tables and names the out-of-array access.
+
+HEVC CBS has a separate allocation-amplification root. Vulnerable
+`H265RawVPS` embeds 1,024 HRD structures and occupies 7,924,248 bytes. CBS
+allocates and zero-fills that entire structure before parsing each VPS and
+retains one content object per unit. Sixteen valid 27-byte VPS NAL units turn a
+432-byte packet into 126,787,968 content bytes through the production read
+entry; 1,024 units project to 8,114,429,952 bytes from 27,648 input bytes.
+Repair `d2dd0a0a8f`, tied to a ClusterFuzz OOM testcase, moves the HRD array to
+an allocation sized by the parsed count.
+
+Two denial-of-service roots complete the set. WinRT gfxcapture accepts crops
+through `INT_MAX` and documents `width=-1` as a rounding control. For a
+1,920-pixel capture with border capture enabled, `crop_left=1921` and
+`crop_right=INT_MAX` form `cap_w=INT_MIN` without prior overflow; the rounding
+branch then evaluates `INT_MIN / -1` before generic frame-geometry validation.
+The exact arithmetic proof aborts under UBSan, while full filter execution
+remains Windows-gated. Separately, a two-line ffconcat file can list itself as
+its first entry. Production ffprobe recursively allocates format contexts and
+opens descriptors until the process limit returns `EMFILE`; a 64-descriptor
+proof records sixty recursive unwind failures. Later repair `597036b692` adds
+a default generic demuxer recursion limit of ten and names `self_ref.ffconcat`.
+
+The durable artifacts are
+`evaluations/ffmpeg_rtp_jpeg_qtable_length_reproducer.c`,
+`evaluations/run_ffmpeg_rtp_jpeg_qtable_length_reproducer.py`,
+`evaluations/ffmpeg_cbs_h265_vps_allocation_amplification_reproducer.c`,
+`evaluations/run_ffmpeg_cbs_h265_vps_allocation_amplification_reproducer.py`,
+`evaluations/ffmpeg_gfxcapture_crop_division_overflow_reproducer.c`,
+`evaluations/run_ffmpeg_gfxcapture_crop_division_overflow_reproducer.py`, and
+`evaluations/run_ffmpeg_concat_self_reference_reproducer.py`. All four ignored
+proof records report `expected_observed=true` at pinned FFmpeg commit
+`795bccdaf57772b1803914dee2f32d52776518e2`. RTP/JPEG, CBS, and concat execute
+production paths; gfxcapture is retained as source-confirmed because its
+production backend is Windows-only on this host.
+
+The other terminal leads close under exact bounds or semantics. A valid AMR-WB
+frame-header byte is nonzero, so mandatory zero padding stops the probe scan.
+AAC's largest copied PCE is about 306 bytes against `MAX_PCE_SIZE=320`.
+Swscale's signed-arithmetic repair preserves modulo color conversion without a
+memory-safety effect. RTP/JPEG's cached-table `memcmp` is protected by
+short-circuit evaluation; the independent header backpatch above is the real
+root. The MPEG, H.264, VVC, frame, filter, and remaining codec candidates retain
+their producer or geometry bounds. The user-supplied H.264 slice-table and
+`top_borders[-1]` chain independently corroborates the existing slice-sentinel
+survivor and is not counted again.
+
+The four mechanisms raise the totals to 81 confirmed root causes and 70
+dynamically reproduced issues. Coverage is 1,260/4,995 (25.23%), with 3,735
+historically ranked files remaining.
+
+Directly slicing the unchanged deterministic order reproduces ranks 1237–1260
+and their committed manifest exactly. The next exact-path manifest seals ranks
+1261–1284 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1261_1284.json` with SHA-256
+`e9ba37500413ad54cbf3189e0e2ce1c386e3f103fb98437848337b628d306d50`.

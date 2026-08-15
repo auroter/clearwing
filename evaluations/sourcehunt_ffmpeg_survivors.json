@@ -3543,5 +3543,306 @@
         "end": 344
       }
     ]
+  },
+  {
+    "case_id": "rtp-jpeg-oversized-qtable-stack-overflow",
+    "finding": {
+      "id": "ffmpeg-rtp-jpeg-oversized-qtable-stack-overflow",
+      "finding_type": "out_of_bounds_write",
+      "cwe": "CWE-121",
+      "file": "libavformat/rtpdec_jpeg.c",
+      "line_number": 155,
+      "severity": "high",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "An RTP/JPEG start packet with q=255 can declare 1,024 complete quantization-table bytes. The parser checks that length only against the packet, then asks jpeg_create_header to serialize sixteen tables into a fixed 1,024-byte stack buffer. The checked bytestream writer saturates at the buffer end, leaving dht_size_ptr equal to the one-past-end pointer; the following raw AV_WB16 backpatch writes two bytes beyond hdr. A full production-parser harness aborts under ASan at the stack boundary. Later repair d84bec2bd6 caps the table data at four 64-byte tables and explicitly identifies an out-of-array access.",
+      "code_snippet": "dht_size_ptr = pbc.buffer; ... AV_WB16(dht_size_ptr, dht_size);",
+      "poc": "Build and run evaluations/ffmpeg_rtp_jpeg_qtable_length_reproducer.c with evaluations/run_ffmpeg_rtp_jpeg_qtable_length_reproducer.py.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a packet-sized 1,024-byte table section fills the fixed JPEG header and leaves a raw two-byte backpatch pointing beyond it",
+        "steps": [
+          {
+            "file": "libavformat/rtpdec_jpeg.c",
+            "line": 271,
+            "function": "jpeg_parse_packet",
+            "code_snippet": "qtable_len = AV_RB16(buf + 2);",
+            "note": "The proof's q=255 start packet declares 1,024 table bytes in its complete packet-bounded section."
+          },
+          {
+            "file": "libavformat/rtpdec_jpeg.c",
+            "line": 260,
+            "function": "jpeg_parse_packet",
+            "code_snippet": "uint8_t hdr[1024];",
+            "note": "All generated JPEG markers, sixteen 65-byte DQT entries, and the later Huffman headers share this fixed stack object."
+          },
+          {
+            "file": "libavformat/rtpdec_jpeg.c",
+            "line": 333,
+            "function": "jpeg_parse_packet",
+            "code_snippet": "jpeg_create_header(hdr, sizeof(hdr), type, width, height, qtables, qtable_len / 64, dri);",
+            "note": "The attacker length becomes a count of sixteen tables with no format-level cap."
+          },
+          {
+            "file": "libavformat/rtpdec_jpeg.c",
+            "line": 155,
+            "function": "jpeg_create_header",
+            "code_snippet": "AV_WB16(dht_size_ptr, dht_size);",
+            "note": "Checked writes have exhausted hdr, but this raw backpatch writes through the saved end pointer; ASan reports a two-byte stack-buffer-overflow."
+          },
+          {
+            "file": "libavformat/rtpdec_jpeg.c",
+            "line": 279,
+            "function": "later repair d84bec2bd6",
+            "code_snippet": "if (qtable_len > 4*64) return AVERROR_INVALIDDATA;",
+            "note": "The later repair adds the missing table-count bound and names the out-of-array access."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/rtpdec_jpeg.c",
+        "start": 94,
+        "end": 180
+      },
+      {
+        "path": "libavformat/rtpdec_jpeg.c",
+        "start": 224,
+        "end": 339
+      }
+    ]
+  },
+  {
+    "case_id": "cbs-h265-vps-allocation-amplification",
+    "finding": {
+      "id": "ffmpeg-cbs-h265-vps-allocation-amplification",
+      "finding_type": "denial_of_service",
+      "cwe": "CWE-400",
+      "file": "libavcodec/cbs_h265.c",
+      "line_number": 368,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "H265RawVPS embeds 1,024 complete HRD parameter structures, making every vulnerable VPS content object 7,924,248 bytes. CBS allocates and zero-fills that entire descriptor-sized object before parsing each VPS, and a fragment retains one object per unit even when repeated VPS IDs replace the persistent parameter-set reference. A production CBS read of sixteen valid 27-byte VPS NAL units therefore turns 432 packet bytes into 126,787,968 retained content bytes; 1,024 identical units project to 8,114,429,952 bytes from a 27,648-byte packet. Later repair d2dd0a0a8f cites the ClusterFuzz OOM testcase and moves the HRD array to an allocation sized by the parsed count.",
+      "code_snippet": "err = ff_cbs_alloc_unit_content(ctx, unit); ... err = cbs_h265_read_vps(ctx, &gbc, vps);",
+      "poc": "Build and run evaluations/ffmpeg_cbs_h265_vps_allocation_amplification_reproducer.c with evaluations/run_ffmpeg_cbs_h265_vps_allocation_amplification_reproducer.py.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "every tiny valid VPS forces allocation and zeroing of an almost eight-megabyte inline HRD array before its syntax is parsed",
+        "steps": [
+          {
+            "file": "libavcodec/cbs_h265.h",
+            "line": 214,
+            "function": "H265RawVPS",
+            "code_snippet": "H265RawHRDParameters hrd_parameters[HEVC_MAX_LAYER_SETS];",
+            "note": "HEVC_MAX_LAYER_SETS is 1,024 and each HRD structure is 7,672 bytes; the complete VPS structure is 7,924,248 bytes in the pinned build."
+          },
+          {
+            "file": "libavcodec/cbs_h265.c",
+            "line": 718,
+            "function": "cbs_h265_unit_types",
+            "code_snippet": "CBS_UNIT_TYPE_INTERNAL_REF(HEVC_NAL_VPS, H265RawVPS, extension_data.data)",
+            "note": "The VPS descriptor declares the complete H265RawVPS size as the allocation size for every decomposed unit."
+          },
+          {
+            "file": "libavcodec/cbs_h265.c",
+            "line": 368,
+            "function": "cbs_h265_read_nal_unit",
+            "code_snippet": "err = ff_cbs_alloc_unit_content(ctx, unit);",
+            "note": "CBS allocates the descriptor-sized content before it dispatches to cbs_h265_read_vps."
+          },
+          {
+            "file": "libavcodec/cbs.c",
+            "line": 938,
+            "function": "cbs_alloc_content",
+            "code_snippet": "av_refstruct_alloc_ext_c(desc->content_size, 0, ...)",
+            "note": "Flag zero causes libavutil's refstruct allocator to memset the complete object, committing the amplified allocation."
+          },
+          {
+            "file": "libavcodec/cbs_h265.h",
+            "line": 214,
+            "function": "later repair d2dd0a0a8f",
+            "code_snippet": "H265RawHRDParameters *hrd_parameters; AVBufferRef *hrd_parameters_ref;",
+            "note": "The ClusterFuzz-linked repair shrinks the resident VPS and separately allocates only the HRD entries declared by its parsed count."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/cbs_h265.h",
+        "start": 90,
+        "end": 220
+      },
+      {
+        "path": "libavcodec/cbs_h265.c",
+        "start": 358,
+        "end": 385
+      },
+      {
+        "path": "libavcodec/cbs_h265.c",
+        "start": 711,
+        "end": 725
+      },
+      {
+        "path": "libavcodec/cbs.c",
+        "start": 916,
+        "end": 960
+      }
+    ]
+  },
+  {
+    "case_id": "gfxcapture-crop-division-overflow",
+    "finding": {
+      "id": "ffmpeg-gfxcapture-crop-division-overflow",
+      "finding_type": "denial_of_service",
+      "cwe": "CWE-190",
+      "file": "libavfilter/vsrc_gfxcapture_winrt.cpp",
+      "line_number": 1132,
+      "severity": "low",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "The Windows gfxcapture filter accepts crop_left and crop_right through INT_MAX and documents negative output width as a rounding control. With border capture enabled on a 1,920-pixel source, crop_left=1921 and crop_right=INT_MAX produce cap_w=INT_MIN through two individually representable subtractions. Supplying width=-1 then evaluates INT_MIN / -1 in signed int before the later generic hardware-frame dimension check. The exact portable arithmetic proof aborts under UBSan; native integer division may likewise trap. Full filter execution is Windows-gated and no later repair is known.",
+      "code_snippet": "cctx->canvas_width = (cap_w / cctx->canvas_width) * cctx->canvas_width;",
+      "poc": "Build and run evaluations/ffmpeg_gfxcapture_crop_division_overflow_reproducer.c with evaluations/run_ffmpeg_gfxcapture_crop_division_overflow_reproducer.py; the runner also verifies the exact production options and expression.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "public crop and rounding options construct the sole signed-division overflow pair before any geometry validation",
+        "steps": [
+          {
+            "file": "libavfilter/vsrc_gfxcapture.c",
+            "line": 48,
+            "function": "gfxcapture_options",
+            "code_snippet": "OFFSET(canvas_width), AV_OPT_TYPE_INT, { .i64 = 0 }, INT_MIN, INT_MAX",
+            "note": "The documented negative-rounding option accepts -1."
+          },
+          {
+            "file": "libavfilter/vsrc_gfxcapture.c",
+            "line": 52,
+            "function": "gfxcapture_options",
+            "code_snippet": "OFFSET(crop_left), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, INT_MAX",
+            "note": "Both horizontal crops accept the extreme values needed by the proof."
+          },
+          {
+            "file": "libavfilter/vsrc_gfxcapture_winrt.cpp",
+            "line": 1121,
+            "function": "setup_gfxcapture_capture",
+            "code_snippet": "int cap_w = wgctx->cap_size.Width - cctx->crop_left - cctx->crop_right;",
+            "note": "For 1920, 1921, and INT_MAX, the two left-associative subtraction results are -1 and INT_MIN, so no earlier undefined overflow is required."
+          },
+          {
+            "file": "libavfilter/vsrc_gfxcapture_winrt.cpp",
+            "line": 1132,
+            "function": "setup_gfxcapture_capture",
+            "code_snippet": "cctx->canvas_width = (cap_w / cctx->canvas_width) * cctx->canvas_width;",
+            "note": "INT_MIN divided by -1 is unrepresentable in signed int; UBSan aborts at the duplicated exact expression."
+          },
+          {
+            "file": "libavfilter/vsrc_gfxcapture_winrt.cpp",
+            "line": 1245,
+            "function": "gfxcapture_config_props",
+            "code_snippet": "ret = init_hwframes_ctx(avctx);",
+            "note": "The generic av_image_check_size guard is reached only after setup_gfxcapture_capture has evaluated the division."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/vsrc_gfxcapture.c",
+        "start": 34,
+        "end": 64
+      },
+      {
+        "path": "libavfilter/vsrc_gfxcapture_winrt.cpp",
+        "start": 1067,
+        "end": 1140
+      },
+      {
+        "path": "libavfilter/vsrc_gfxcapture_winrt.cpp",
+        "start": 1224,
+        "end": 1250
+      },
+      {
+        "path": "libavutil/hwcontext.c",
+        "start": 337,
+        "end": 370
+      }
+    ]
+  },
+  {
+    "case_id": "concat-self-reference-recursion-exhaustion",
+    "finding": {
+      "id": "ffmpeg-concat-self-reference-recursion-exhaustion",
+      "finding_type": "denial_of_service",
+      "cwe": "CWE-674",
+      "file": "libavformat/concatdec.c",
+      "line_number": 360,
+      "severity": "low",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "A two-line ffconcat script can name itself as its first file. concat_read_header calls open_file, which allocates a nested AVFormatContext and recursively opens that same script without carrying any depth state. The production ffprobe proof reaches a deliberately reduced 64-descriptor process limit, observes sixty nested unwind errors, and fails only when the OS returns EMFILE. Larger process limits permit proportionally more descriptor, context, and stack consumption from the same tiny input. Later repair 597036b692 adds a default recursion limit of ten and explicitly names self_ref.ffconcat.",
+      "code_snippet": "cat->avf = avformat_alloc_context(); ... avformat_open_input(&cat->avf, file->url, NULL, &options)",
+      "poc": "Run evaluations/run_ffmpeg_concat_self_reference_reproducer.py against a pinned build with the concat demuxer and file protocol enabled.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a self-referencing concat entry recursively allocates and opens until an external process resource limit stops it",
+        "steps": [
+          {
+            "file": "libavformat/concatdec.c",
+            "line": 700,
+            "function": "concat_read_header",
+            "code_snippet": "if ((ret = open_file(avf, 0)) < 0) return ret;",
+            "note": "Opening a concat script immediately opens its first listed file during header parsing."
+          },
+          {
+            "file": "libavformat/concatdec.c",
+            "line": 346,
+            "function": "open_file",
+            "code_snippet": "cat->avf = avformat_alloc_context();",
+            "note": "Every nesting level allocates another complete format context."
+          },
+          {
+            "file": "libavformat/concatdec.c",
+            "line": 360,
+            "function": "open_file",
+            "code_snippet": "avformat_open_input(&cat->avf, file->url, NULL, &options)",
+            "note": "The self-reference re-enters concat_read_header with no internal depth bound and opens another file descriptor."
+          },
+          {
+            "file": "libavformat/avformat.c",
+            "line": 851,
+            "function": "ff_copy_whiteblacklists",
+            "code_snippet": "return 0;",
+            "note": "The vulnerable helper copies allow/deny lists into nested contexts but carries no recursion state."
+          },
+          {
+            "file": "libavformat/avformat.c",
+            "line": 896,
+            "function": "later repair 597036b692",
+            "code_snippet": "if (src->recursion_limit <= 0) return AVERROR_INVALIDDATA; dst->recursion_limit = src->recursion_limit - 1;",
+            "note": "The repair adds and propagates a generic demuxer recursion budget, defaulting to ten."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/concatdec.c",
+        "start": 336,
+        "end": 370
+      },
+      {
+        "path": "libavformat/concatdec.c",
+        "start": 680,
+        "end": 706
+      },
+      {
+        "path": "libavformat/avformat.c",
+        "start": 826,
+        "end": 852
+      }
+    ]
   }
 ]
