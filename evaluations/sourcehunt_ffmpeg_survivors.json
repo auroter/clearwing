@@ -4006,5 +4006,334 @@
         "end": 836
       }
     ]
+  },
+  {
+    "case_id": "swaprect-odd-width-nv12-temp-overflow",
+    "finding": {
+      "id": "ffmpeg-swaprect-odd-width-nv12-temp-overflow",
+      "finding_type": "out_of_bounds_write",
+      "cwe": "CWE-787",
+      "file": "libavfilter/vf_swaprect.c",
+      "line_number": 187,
+      "severity": "high",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "vf_swaprect allocates its temporary row as the full input width times plane zero's one-byte pixel step. Its copy loop instead uses each plane's independently ceil-subsampled width and pixel step. For an odd-width 17-pixel NV12 frame, the allocation is 17 bytes while the interleaved chroma row is ceil(17 / 2) times two, or 18 bytes. A public FFmpeg filter graph deterministically makes ASan report an 18-byte heap write starting exactly at the end of the 17-byte allocation. Later repair a7e38b617b sizes the temporary row for the widest plane and explicitly identifies an out-of-array access.",
+      "code_snippet": "s->temp = av_malloc_array(inlink->w, s->pixsteps[0]); ... memcpy(s->temp, src, pw[p] * s->pixsteps[p]);",
+      "poc": "Run a 17x16 NV12 frame through swaprect=w=17:h=16:x1=0:y1=0:x2=0:y2=0 using evaluations/run_ffmpeg_swaprect_odd_nv12_reproducer.py.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "an odd-width semiplanar chroma row is one byte wider than the luma-sized temporary row",
+        "steps": [
+          {
+            "file": "libavfilter/vf_swaprect.c",
+            "line": 209,
+            "function": "config_input",
+            "code_snippet": "s->desc = av_pix_fmt_desc_get(inlink->format); ... av_image_fill_max_pixsteps(s->pixsteps, NULL, s->desc);",
+            "note": "NV12 is accepted by the generic software-pixel-format query; its luma step is one and its interleaved chroma step is two."
+          },
+          {
+            "file": "libavfilter/vf_swaprect.c",
+            "line": 213,
+            "function": "config_input",
+            "code_snippet": "s->temp = av_malloc_array(inlink->w, s->pixsteps[0]);",
+            "note": "For width 17 and the luma step, the one shared row buffer contains exactly 17 bytes."
+          },
+          {
+            "file": "libavfilter/vf_swaprect.c",
+            "line": 159,
+            "function": "filter_frame",
+            "code_snippet": "pw[1] = pw[2] = AV_CEIL_RSHIFT(w, s->desc->log2_chroma_w);",
+            "note": "The NV12 chroma plane correctly rounds the odd width up to nine samples."
+          },
+          {
+            "file": "libavfilter/vf_swaprect.c",
+            "line": 187,
+            "function": "filter_frame",
+            "code_snippet": "memcpy(s->temp, src, pw[p] * s->pixsteps[p]);",
+            "note": "The chroma iteration copies nine two-byte samples into the 17-byte temporary row; ASan reports WRITE of size 18 zero bytes after that allocation."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/vf_swaprect.c",
+        "start": 75,
+        "end": 197
+      },
+      {
+        "path": "libavfilter/vf_swaprect.c",
+        "start": 199,
+        "end": 218
+      }
+    ]
+  },
+  {
+    "case_id": "swaprect-negative-runtime-width-copy",
+    "finding": {
+      "id": "ffmpeg-swaprect-negative-runtime-width-copy",
+      "finding_type": "denial_of_service",
+      "cwe": "CWE-191",
+      "file": "libavfilter/vf_swaprect.c",
+      "line_number": 187,
+      "severity": "low",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "vf_swaprect accepts rectangle width as a runtime string expression and converts the result to int without enforcing a positive range. Its later FFMIN3 only caps the width above, so an explicit width of -1 survives into every per-plane copy-size multiplication. A public FFmpeg filter graph makes ASan abort with negative-size-param: (size=-1) at the first memcpy. The July 2026 widest-plane allocation repair does not add a lower bound, and the same failure remains present on current origin/master; this is distinct from the odd-width NV12 allocation root.",
+      "code_snippet": "w = dw; ... w = FFMIN3(w, inlink->w - x1[0], inlink->w - x2[0]); ... memcpy(s->temp, src, pw[p] * s->pixsteps[p]);",
+      "poc": "Run a 17x16 NV12 frame through swaprect=w=-1:h=16:x1=0:y1=0:x2=0:y2=0 using evaluations/run_ffmpeg_swaprect_negative_width_reproducer.py.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a negative public width expression survives an upper-only clamp and becomes memcpy's unsigned size",
+        "steps": [
+          {
+            "file": "libavfilter/vf_swaprect.c",
+            "line": 99,
+            "function": "filter_frame",
+            "code_snippet": "ret = av_expr_parse_and_eval(&dw, s->w, ...);",
+            "note": "The public runtime option parses -1 successfully and this path performs no domain check on the resulting double."
+          },
+          {
+            "file": "libavfilter/vf_swaprect.c",
+            "line": 141,
+            "function": "filter_frame",
+            "code_snippet": "w = dw;",
+            "note": "The exactly representable -1 value becomes the rectangle's signed int width."
+          },
+          {
+            "file": "libavfilter/vf_swaprect.c",
+            "line": 154,
+            "function": "filter_frame",
+            "code_snippet": "w = FFMIN3(w, inlink->w - x1[0], inlink->w - x2[0]);",
+            "note": "All other terms are nonnegative, so the minimum remains -1 rather than rejecting or clamping it to zero."
+          },
+          {
+            "file": "libavfilter/vf_swaprect.c",
+            "line": 187,
+            "function": "filter_frame",
+            "code_snippet": "memcpy(s->temp, src, pw[p] * s->pixsteps[p]);",
+            "note": "On plane zero the signed product is -1 and converts to memcpy's size_t; ASan aborts with the exact negative-size diagnostic."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/vf_swaprect.c",
+        "start": 35,
+        "end": 74
+      },
+      {
+        "path": "libavfilter/vf_swaprect.c",
+        "start": 75,
+        "end": 197
+      }
+    ]
+  },
+  {
+    "case_id": "concat-total-size-signed-overflow",
+    "finding": {
+      "id": "ffmpeg-concat-total-size-signed-overflow",
+      "finding_type": "denial_of_service",
+      "cwe": "CWE-190",
+      "file": "libavformat/concat.c",
+      "line_number": 119,
+      "severity": "low",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The concat URL protocol accepts individually valid signed 64-bit child sizes but accumulates them in an int64_t without checking their sum. The subfile protocol can advertise a large logical end while remaining backed by a tiny seekable file, so a public avio_open2 URL containing two 9,000,000,000,000,000,000-byte subfiles reaches the addition without large storage. UBSan aborts in concat_open when the second size is added. Later repair 702b0784b7, titled guard total_size overflow, checks the exact addition in both concat and concatf before returning invalid data.",
+      "code_snippet": "int64_t size, total_size = 0; ... total_size += size;",
+      "poc": "Build and run evaluations/ffmpeg_concat_total_size_overflow_reproducer.c with evaluations/run_ffmpeg_concat_total_size_overflow_reproducer.py.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "two valid virtual child sizes overflow concat_open's signed 64-bit accumulator",
+        "steps": [
+          {
+            "file": "libavformat/subfile.c",
+            "line": 37,
+            "function": "subfile_options",
+            "code_snippet": "{ \"end\", \"end offset\", OFFSET(end), AV_OPT_TYPE_INT64, {.i64 = 0}, 0, INT64_MAX, D },",
+            "note": "Each public child URL can declare a 9e18 logical end, still within its option domain."
+          },
+          {
+            "file": "libavformat/subfile.c",
+            "line": 126,
+            "function": "subfile_seek",
+            "code_snippet": "case AVSEEK_SIZE: return end - c->start;",
+            "note": "The child reports the declared logical span without requiring the underlying tiny file to occupy that storage."
+          },
+          {
+            "file": "libavformat/concat.c",
+            "line": 110,
+            "function": "concat_open",
+            "code_snippet": "if ((size = ffurl_size(uc)) < 0) { ... }",
+            "note": "Both 9e18 child sizes are nonnegative and therefore accepted individually."
+          },
+          {
+            "file": "libavformat/concat.c",
+            "line": 119,
+            "function": "concat_open",
+            "code_snippet": "total_size += size;",
+            "note": "The second addition mathematically produces 18e18, beyond INT64_MAX; the public avio_open2 proof aborts under UBSan here."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/concat.c",
+        "start": 57,
+        "end": 133
+      },
+      {
+        "path": "libavformat/subfile.c",
+        "start": 25,
+        "end": 139
+      }
+    ]
+  },
+  {
+    "case_id": "dhav-duration-tail-position-overread",
+    "finding": {
+      "id": "ffmpeg-dhav-duration-tail-position-overread",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavformat/dhav.c",
+      "line_number": 286,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "DHAV duration discovery caps its tail allocation at one MiB but validates a footer-derived absolute position with pos + 20. A seekable custom input with logical size INT64_MAX and a final dhav footer whose seek_back is zero derives pos=INT64_MAX; pos + 20 overflows, bypassing the upper bound. The following date load reads four bytes sixteen bytes beyond the tail allocation, which a production-demuxer harness reproduces under ASan. Later repair 50e65074f5, titled Fix second integer overflow in get_duration(), rewrites the exact bound in subtraction form.",
+      "code_snippet": "if (pos < buffer_pos || pos + 20 > buffer_pos + buffer_size) ... date = AV_RL32(buffer + (pos - buffer_pos) + 16);",
+      "poc": "Build and run evaluations/ffmpeg_dhav_duration_overflow_reproducer.c with evaluations/run_ffmpeg_dhav_duration_overflow_reproducer.py.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a DHAV footer makes an overflowing absolute-position bound accept a date read beyond the capped tail buffer",
+        "steps": [
+          {
+            "file": "libavformat/dhav.c",
+            "line": 252,
+            "function": "get_duration",
+            "code_snippet": "int64_t size = avio_size(s->pb);",
+            "note": "A public custom seekable AVIO reports the valid int64 logical size INT64_MAX."
+          },
+          {
+            "file": "libavformat/dhav.c",
+            "line": 263,
+            "function": "get_duration",
+            "code_snippet": "buffer_size = FFMIN(MAX_DURATION_BUFFER_SIZE, size); buffer = av_malloc(buffer_size);",
+            "note": "Only the final one MiB is allocated and read."
+          },
+          {
+            "file": "libavformat/dhav.c",
+            "line": 275,
+            "function": "get_duration",
+            "code_snippet": "int64_t seek_back = AV_RL32(buffer + offset + 4); pos = buffer_pos + offset - seek_back + 8;",
+            "note": "A final dhav footer with seek_back zero makes the candidate position exactly INT64_MAX."
+          },
+          {
+            "file": "libavformat/dhav.c",
+            "line": 283,
+            "function": "get_duration",
+            "code_snippet": "if (pos < buffer_pos || pos + 20 > buffer_pos + buffer_size)",
+            "note": "pos + 20 overflows, so the upper-bound comparison does not reject the candidate."
+          },
+          {
+            "file": "libavformat/dhav.c",
+            "line": 286,
+            "function": "get_duration",
+            "code_snippet": "date = AV_RL32(buffer + (pos - buffer_pos) + 16);",
+            "note": "The four-byte load starts sixteen bytes beyond the one-MiB heap allocation; ASan reports that exact over-read."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/dhav.c",
+        "start": 217,
+        "end": 294
+      },
+      {
+        "path": "libavformat/dhav.c",
+        "start": 296,
+        "end": 344
+      }
+    ]
+  },
+  {
+    "case_id": "truemotion2rt-unchecked-reader-overread",
+    "finding": {
+      "id": "ffmpeg-truemotion2rt-unchecked-reader-overread",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavcodec/truemotion2rt.c",
+      "line_number": 130,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "TrueMotion2RT's only packet-size guard permits the luma bit demand to reach four times the complete packet's capacity. The decoder then initializes its bit reader after a variable header, skips 32 bits, and consumes luma plus two chroma planes. The default safe reader clamps an exhausted stream, but FFmpeg's supported --disable-safe-bitstream-reader build lets the index continue through memory. A public 50-byte packet declaring a 20x20, four-bit-delta frame passes the guard and makes ASan report a four-byte heap read immediately after the packet's 64-byte mandatory padding. This configuration requirement is explicit; default builds do not exhibit the memory read.",
+      "code_snippet": "if (ceil(width / hscale) * height * delta_size > avpkt->size * 8LL * 4) ... init_get_bits8(gb, avpkt->data + ret, avpkt->size - ret); ... get_bits(gb, s->delta_size);",
+      "poc": "Configure FFmpeg with --disable-safe-bitstream-reader, then build and run evaluations/ffmpeg_truemotion2rt_unchecked_reader_reproducer.c with evaluations/run_ffmpeg_truemotion2rt_unchecked_reader_reproducer.py.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "an underspecified packet guard lets the unchecked bit reader advance beyond both payload and mandatory padding",
+        "steps": [
+          {
+            "file": "libavcodec/truemotion2rt.c",
+            "line": 84,
+            "function": "truemotion2rt_decode_header",
+            "code_snippet": "s->delta_size = header_buffer[1]; ... height = AV_RL16(header_buffer + 5); width = AV_RL16(header_buffer + 7);",
+            "note": "The crafted public packet validly selects four delta bits and 20x20 dimensions."
+          },
+          {
+            "file": "libavcodec/truemotion2rt.c",
+            "line": 113,
+            "function": "truemotion2rt_decode_frame",
+            "code_snippet": "if ((avctx->width + s->hscale - 1) / s->hscale * avctx->height * s->delta_size > avpkt->size * 8LL * 4)",
+            "note": "The 1,600-bit luma demand equals the 50-byte packet's four-times guard limit, so it is accepted despite the complete packet containing only 400 bits."
+          },
+          {
+            "file": "libavcodec/truemotion2rt.c",
+            "line": 116,
+            "function": "truemotion2rt_decode_frame",
+            "code_snippet": "ret = init_get_bits8(gb, avpkt->data + ret, avpkt->size - ret);",
+            "note": "The reader excludes the ten-byte header and therefore actually receives only 40 bytes before padding."
+          },
+          {
+            "file": "libavcodec/get_bits.h",
+            "line": 221,
+            "function": "SKIP_COUNTER",
+            "code_snippet": "#define SKIP_COUNTER(name, gb, num) name ## _index += (num)",
+            "note": "With CONFIG_SAFE_BITSTREAM_READER=0, no size-plus-eight clamp constrains the reader index."
+          },
+          {
+            "file": "libavcodec/truemotion2rt.c",
+            "line": 130,
+            "function": "truemotion2rt_decode_frame",
+            "code_snippet": "diff += delta_tabs[delta_mode][get_bits(gb, s->delta_size)];",
+            "note": "After the 32-bit prefix and repeated pixel reads, get_bits performs a four-byte load exactly after the 114-byte packet-plus-padding allocation; later chroma loops would consume still more bits."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/truemotion2rt.c",
+        "start": 52,
+        "end": 207
+      },
+      {
+        "path": "libavcodec/get_bits.h",
+        "start": 44,
+        "end": 235
+      },
+      {
+        "path": "libavcodec/get_bits.h",
+        "start": 288,
+        "end": 350
+      }
+    ]
   }
 ]

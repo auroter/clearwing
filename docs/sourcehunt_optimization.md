@@ -3118,3 +3118,97 @@ and their committed manifest and SHA-256 exactly. The next exact-path manifest
 seals ranks 1309–1332 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1309_1332.json` with SHA-256
 `7d251fab475e3490cc8bf4ac39449df05af17a1f6aabeba7cac6c343178651b6`.
+
+### Blind wave 1309–1332 and five independently reproduced roots
+
+The wave achieved successful source-bearing work on all 24 exact paths across
+an interrupted 20-path initial session and a four-path retry containing only
+previously untouched targets. Together the sessions used 7,242,051 tokens over
+819 settled model calls and made 165 candidate/finding calls. Two long endpoint
+reads were cancelled only after every started path had already completed source
+actions; the retry then completed `dca_exss`, `xfaceenc`, `vf_scale_vulkan`, and
+`wavarc`. The online scaffold submitted one formal finding, for TrueMotion2RT.
+
+Offline review and production-path proofs confirmed five distinct roots. First,
+`vf_swaprect` allocated one shared temporary row as the input width times plane
+zero's pixel step. An odd-width 17-pixel NV12 frame therefore allocated 17
+bytes, but the interleaved chroma iteration copied nine two-byte samples. The
+public filter graph makes ASan report an 18-byte heap write exactly after the
+17-byte allocation. Later repair `a7e38b617b32f996beaa371bbf04b39907d7a527`
+sizes the row for the widest plane and explicitly identifies the out-of-array
+access.
+
+The same filter contains an independent option-domain root. Its public runtime
+width expression has no positive-range check, and the later `FFMIN3` caps only
+the upper side. `w=-1` consequently reaches the first plane's `memcpy` as size
+-1; ASan aborts with `negative-size-param`. The widest-plane repair does not
+address this mechanism, which remains present in current `origin/master`. It is
+classified as a low-severity configuration-triggered denial of service rather
+than conflated with the odd-width media geometry.
+
+The concat protocol accumulates individually valid signed 64-bit child sizes
+without guarding their sum. Two public `subfile` URLs can each advertise a
+9,000,000,000,000,000,000-byte logical range while both remain backed by one
+tiny seekable file. A public `avio_open2` call makes UBSan abort on the second
+addition at `concat.c:119`. Later repair
+`702b0784b73d22da4004757a1f4f3b4cbae5f969`, titled `guard total_size
+overflow`, checks the exact addition in both concat variants.
+
+DHAV duration discovery caps its tail allocation at one MiB but checked a
+footer-derived absolute position with `pos + 20`. A seekable custom input with
+logical size `INT64_MAX` and a final `dhav` footer whose `seek_back` is zero
+derives `pos=INT64_MAX`; the addition wraps and the subsequent date load reads
+four bytes sixteen bytes beyond the tail buffer. ASan reproduces that exact
+over-read through the production demuxer. Later repair
+`50e65074f5cca638d6dd4cf9db4b6dcf4f0a863e`, titled `Fix second integer
+overflow in get_duration()`, rewrites the bound in subtraction form.
+
+Finally, TrueMotion2RT compares luma demand with four times the complete
+packet's bit capacity, then initializes its reader after the variable header,
+skips 32 bits, and also consumes two chroma planes. The default safe reader
+clamps an exhausted malformed stream. In FFmpeg's supported
+`--disable-safe-bitstream-reader` configuration, however, the index continues
+through memory. A public 50-byte packet declaring a 20x20 four-bit-delta frame
+passes the guard and makes ASan report a four-byte read exactly after the
+packet's 64-byte mandatory padding. The online finding correctly identified
+the arithmetic but overstated default-build impact; the survivor explicitly
+records the required configuration and uses medium severity.
+
+The durable artifacts are
+`evaluations/run_ffmpeg_swaprect_odd_nv12_reproducer.py`,
+`evaluations/run_ffmpeg_swaprect_negative_width_reproducer.py`,
+`evaluations/ffmpeg_concat_total_size_overflow_reproducer.c`,
+`evaluations/run_ffmpeg_concat_total_size_overflow_reproducer.py`,
+`evaluations/ffmpeg_dhav_duration_overflow_reproducer.c`,
+`evaluations/run_ffmpeg_dhav_duration_overflow_reproducer.py`,
+`evaluations/ffmpeg_truemotion2rt_unchecked_reader_reproducer.c`, and
+`evaluations/run_ffmpeg_truemotion2rt_unchecked_reader_reproducer.py`. Every
+ignored proof record reports `expected_observed=true` at pinned FFmpeg commit
+`795bccdaf57772b1803914dee2f32d52776518e2`.
+
+The remaining terminal leads close under concrete bounds and contracts. Xan's
+WC3 dimensions pass through `ff_set_dimensions` and `av_image_check_size2`
+before its product allocations. FLAC picture zero-copy and truncation paths
+retain `len <= left` or allocate the complete declared length. DCA EXSS first
+bounds `exss_size` to the real packet and then bounds every asset offset against
+it. WavArc's dangerous format lengths become negative during conversion or
+cross `ff_alloc_extradata`'s `INT32_MAX - padding` rejection threshold before
+the read. AOM film-grain references inherit the parser's point-count caps, and
+the AAP, CELP, DCT, LC3, AVS, XFace, Vulkan, hardware, and metric paths retain
+their row, frame, allocation, or producer contracts.
+
+The user-supplied H.264 slice-table details independently confirm the existing
+`h264-slice-sentinel-collision` survivor: the 16-bit `0xFFFF` poison value,
+spare `mb_stride` column, deblocking-only equality, `top_borders[-1]`, and
+96-byte underflow all match its recorded trace. This is corroboration, not a
+new root, and is not counted again.
+
+The five mechanisms raise the totals to 88 confirmed root causes and 77
+dynamically reproduced issues. Coverage is 1,332/4,995 (26.67%), with 3,663
+historically ranked files remaining.
+
+Directly slicing the unchanged deterministic order reproduces ranks 1309–1332
+and their committed manifest exactly. The next exact-path manifest seals ranks
+1333–1356 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1333_1356.json` with SHA-256
+`1f0e32f25d1a5f9bef29ffd19edb71d7a0cc62a648892b888c8f0e9aab7f0dac`.
