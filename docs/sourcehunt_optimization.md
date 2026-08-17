@@ -3411,3 +3411,69 @@ and their committed manifest and SHA-256 exactly. The next exact-path manifest
 seals ranks 1405–1428 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1405_1428.json` with SHA-256
 `a0dda410fd3bd0799189981e386fd8fc740bc6fba0852c186c5017305aa4346d`.
+
+### Blind wave 1405–1428 closure
+
+The wave completed source-bearing work on all 24 exact paths in one natural
+session. It settled 778 model calls using 6,977,620 input tokens and 162,809
+output tokens, 7,140,429 total, and made 164 candidate calls. The online
+scaffold submitted no formal findings.
+
+Offline adjudication confirmed no new root cause. The strongest apparent lead
+was FlashSV's compressed-block output exceeding its nominal per-block packet
+budget. `compress2()` can write at most the explicit input-plus-twelve cap, but
+`ff_alloc_packet()` uses a reusable padded allocation with substantially more
+than twelve bytes of growth room per block. The legacy encoder then copies the
+actual returned size into a newly sized refcounted packet. This can produce a
+compression error or malformed output, but it does not cross the allocated
+object. SGI's packed-row accesses exactly match depth times width times bytes
+per channel; its RLE packet arithmetic remains below the generic image-size
+gate, and oversized doubled allocations are rejected by `ff_alloc_packet()`.
+
+The LoongArch RGB tail mirrors the scalar `ceil(width / 2)` pair writer. On
+arm64, public `sws_scale()` probes with a 17-pixel RGB24 stride and a three-byte
+terminal canary completed five scaled rows without changing the canary. The
+stronger probe used YUV444P10LE input and Lanczos scaling to force the generic
+RGB output path. This rules out an architecture-independent odd-width
+overwrite; the architecture-specific helper remains closed by its pair-writer
+contract rather than by direct dynamic reproduction here. PNM's persistent
+ASCII scan offset is either
+relative to a header at buffer offset zero or reset when a prefixed buffered
+header fails resynchronization. AAC TNS limits its history reads to the number
+of already traversed coefficients and divides one bounded LPC order among its
+filters. AC-3's 16-entry mantissa counter is encoder-only and receives the
+0–15 AC-3 BAP table; the 0–19 E-AC-3 table is used only by the decoder path
+that does not call that counter.
+
+The remaining candidates close under established contracts. Dirac pads every
+IDWT height to the decomposition power of two, so Haar's odd row cursor never
+equals its even height. Snow dispatches only 16/32-stride blocks to its fixed
+assembly kernels and falls back for subsampled 4/8-stride chroma. H.264 qpel
+inherits reference-edge padding, VP9 IDCT receives a writable codec-owned
+coefficient block, and VAAPI allocates two `VABufferID` elements for every
+counted slice. Blackframe, Faan IDCT, D3D11 scale, LCEVC, and OpenCL NLMeans
+retain their negotiated frame, ownership, queue-order, and parameter bounds;
+AV1 Annex B and Sega FILM apply their size and table-index checks before the
+candidate operations. The previously recorded SBC encoder disclosure and Sega
+FILM muxer division are companion-file roots, not new findings in `sbc.c` or
+`segafilm.c`.
+
+Post-snapshot changes on these paths are non-oracular: H.264 and Dirac widen
+stride types, AAC TNS changes audio behavior, DNN and Vulkan changes add or
+refactor backends, LCEVC adds formats and adjusts unknown initial dimensions,
+and blackframe adopts an overflow-safe shared slice helper. The D3D11 scale
+change removes one duplicate configuration-time buffer reference; it does not
+establish an attacker-repeatable sustained-exhaustion root.
+
+The user-supplied H.264 slice-table chain remains strong independent
+corroboration of `h264-slice-sentinel-collision` and is not counted again.
+
+Totals remain 91 confirmed root causes and 80 dynamically reproduced issues.
+Coverage is 1,428/4,995 (28.59%), with 3,567 historically ranked files
+remaining.
+
+Directly slicing the unchanged deterministic order reproduces ranks 1405–1428
+and their committed manifest and SHA-256 exactly. The next exact-path manifest
+seals ranks 1429–1452 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1429_1452.json` with SHA-256
+`bdc9eb6015cda6b0e43b16048087649733c64ec87d611d3f5290ffa1db288bd4`.
