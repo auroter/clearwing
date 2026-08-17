@@ -4589,5 +4589,221 @@
         "end": 2021
       }
     ]
+  },
+  {
+    "case_id": "mvc2-palette-stack-disclosure",
+    "finding": {
+      "id": "ffmpeg-mvc2-palette-stack-disclosure",
+      "finding_type": "information_disclosure",
+      "cwe": "CWE-200",
+      "file": "libavcodec/mvcdec.c",
+      "line_number": 196,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "MVC2 stores its 128-entry RGB palette in an uninitialized stack array, initializes only the packet-declared number of colors, and later accepts seven-bit palette indices without checking them against that count. An eight-byte public decoder packet declares a 4x4 frame with zero colors and then selects palette index zero, copying four uninitialized stack bytes into all 16 returned RGB32 pixels. Compiling the vulnerable decoder source under deterministic pattern and zero automatic-variable initialization produces `pixel=aaaaaaaa` and `pixel=00000000` respectively through the identical public avcodec packet path, proving that stack contents cross into the decoded frame. A repair must reject every index greater than or equal to `nb_colors`; zero-initializing the array is only the differential proof.",
+      "code_snippet": "uint32_t color[128], v[8]; ... for (i = 0; i < FFMIN(nb_colors, 128); i++) color[i] = ...; ... set_4x4_block(..., color[p0 & 0x7F]);",
+      "poc": "Configure the pinned FFmpeg tree with --enable-decoder=mvc2, then run evaluations/run_ffmpeg_mvc2_palette_disclosure_reproducer.py with evaluations/ffmpeg_mvc2_palette_disclosure_reproducer.c to record the pattern/zero stack differential.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "an undeclared MVC2 palette index reads an uninitialized stack entry and publishes it as decoded RGB pixels",
+        "steps": [
+          {
+            "file": "libavcodec/mvcdec.c",
+            "line": 141,
+            "function": "decode_mvc2",
+            "code_snippet": "uint32_t color[128], v[8];",
+            "note": "The complete palette is automatic stack storage with no initializer."
+          },
+          {
+            "file": "libavcodec/mvcdec.c",
+            "line": 157,
+            "function": "decode_mvc2",
+            "code_snippet": "nb_colors = bytestream2_get_byteu(gb);",
+            "note": "The proof packet sets the attacker-controlled palette count to zero."
+          },
+          {
+            "file": "libavcodec/mvcdec.c",
+            "line": 160,
+            "function": "decode_mvc2",
+            "code_snippet": "for (i = 0; i < FFMIN(nb_colors, 128); i++) color[i] = ...;",
+            "note": "No array entry is initialized when the declared palette is empty."
+          },
+          {
+            "file": "libavcodec/mvcdec.c",
+            "line": 194,
+            "function": "decode_mvc2",
+            "code_snippet": "if ((p0 & 0x7F) == (p1 & 0x7F))",
+            "note": "Packet bytes 00 80 select the equal-index palette-block form with index zero; the branch checks equality but not whether that index was declared."
+          },
+          {
+            "file": "libavcodec/mvcdec.c",
+            "line": 196,
+            "function": "decode_mvc2",
+            "code_snippet": "set_4x4_block(..., color[p0 & 0x7F]);",
+            "note": "The uninitialized four-byte palette entry is replicated into all 16 public output-frame pixels."
+          },
+          {
+            "file": "libavcodec/mvcdec.c",
+            "line": 234,
+            "function": "mvc_decode_frame",
+            "code_snippet": "ret = decode_mvc2(avctx, &gb, frame->data[0], ...); ... *got_frame = 1;",
+            "note": "The normal public decoder callback returns the frame containing those stack-derived pixel bytes."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/mvcdec.c",
+        "start": 136,
+        "end": 251
+      }
+    ]
+  },
+  {
+    "case_id": "mermaidhtml-output-xss",
+    "finding": {
+      "id": "ffmpeg-mermaidhtml-output-xss",
+      "finding_type": "xss",
+      "cwe": "CWE-79",
+      "file": "fftools/textformat/tf_mermaid.c",
+      "line_number": 597,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "FFmpeg's Mermaid formatter emits string values as HTML fragments after replacing only double quotes, while graphprint supplies attacker-influenced input URLs and filenames as those values. In MermaidHTML mode the complete diagram is inserted inside the generated report's `<pre class=\"mermaid\">` element. A raw-video input named `source<img src=x onerror=alert(4242)>.raw` therefore places the raw tag in the report. The durable proof runs the public ffmpeg execution-graph path and safely parses the output without a browser; Python's HTML parser observes an actual `img` element with the attacker-supplied `onerror` attribute inside the Mermaid pre element. Scope requires an operator to request MermaidHTML output and open a report that describes an attacker-influenced URL or filename.",
+      "code_snippet": "const char *tmp = av_strireplace(str, \"\\\"\", \"'\"); writer_printf(tfc, \"<span class=\\\"%s\\\">%s</span>\", key, tmp);",
+      "poc": "Configure the pinned FFmpeg tree with ffmpeg, rawvideo input, null output, and graph printing enabled, then run evaluations/run_ffmpeg_mermaidhtml_injection_reproducer.py and inspect its parser-only proof JSON; never open the generated payload in a browser.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "an attacker-influenced media URL crosses directly into active markup in a standalone MermaidHTML execution-graph report",
+        "steps": [
+          {
+            "file": "fftools/graph/graphprint.c",
+            "line": 604,
+            "function": "print_streams",
+            "code_snippet": "if (fc->url) { ... print_str(\"url\", fc->url); }",
+            "note": "The input AVFormatContext URL, including a local filename supplied on the command line, enters the generic text formatter."
+          },
+          {
+            "file": "fftools/textformat/tf_mermaid.c",
+            "line": 596,
+            "function": "mermaid_print_value",
+            "code_snippet": "const char *tmp = av_strireplace(str, \"\\\"\", \"'\");",
+            "note": "Only double quotes are substituted; angle brackets and event-handler markup remain intact."
+          },
+          {
+            "file": "fftools/textformat/tf_mermaid.c",
+            "line": 597,
+            "function": "mermaid_print_value",
+            "code_snippet": "writer_printf(tfc, \"<span class=\\\"%s\\\">%s</span>\", key, tmp);",
+            "note": "The unescaped URL is emitted as markup in the diagram text."
+          },
+          {
+            "file": "fftools/resources/graph.html",
+            "line": 72,
+            "function": "MermaidHTML template",
+            "code_snippet": "<pre class=\"mermaid\">\n__###__\n</pre>",
+            "note": "The formatter substitutes the diagram into an HTML document; pre elements do not suppress nested tag parsing."
+          },
+          {
+            "file": "fftools/textformat/tf_mermaid.c",
+            "line": 536,
+            "function": "mermaid_print_section_footer",
+            "code_snippet": "token_pos += strlen(\"__###__\"); writer_put_str(tfc, token_pos);",
+            "note": "MermaidHTML completes the standalone document around the injected diagram. The parser-only proof identifies the payload as an img element with an onerror attribute."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "fftools/textformat/tf_mermaid.c",
+        "start": 526,
+        "end": 638
+      },
+      {
+        "path": "fftools/graph/graphprint.c",
+        "start": 588,
+        "end": 613
+      },
+      {
+        "path": "fftools/resources/graph.html",
+        "start": 68,
+        "end": 87
+      }
+    ]
+  },
+  {
+    "case_id": "vble-odd-chroma-disclosure",
+    "finding": {
+      "id": "ffmpeg-vble-odd-chroma-disclosure",
+      "finding_type": "information_disclosure",
+      "cwe": "CWE-200",
+      "file": "libavcodec/vble.c",
+      "line_number": 125,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "VBLE forces YUV420P output and sizes its symbol buffer with FFmpeg's complete image-geometry helper, but it decodes both chroma planes with `width / 2` and `height / 2`. YUV420P instead uses ceiling subsampling for odd dimensions. A public 3x3 decoder proof supplies seventeen valid zero-length symbols and a `get_buffer2` callback that fills the codec-owned frame with 0xA5. The luma plane and first sample in each logical 2x2 chroma plane are decoded to zero, while the other six visible U/V samples remain 0xA5: `u=00a5/a5a5 v=00a5/a5a5`. The decoder therefore publishes prior buffer contents as visible chroma on odd-width or odd-height frames.",
+      "code_snippet": "int width_uv = avctx->width / 2, height_uv = avctx->height / 2; ... vble_restore_plane(ctx, pic, &gb, 1, offset, width_uv, height_uv); ... vble_restore_plane(ctx, pic, &gb, 2, offset, width_uv, height_uv);",
+      "poc": "Configure the pinned FFmpeg tree with --enable-decoder=vble, then build evaluations/ffmpeg_vble_odd_chroma_disclosure_reproducer.c through evaluations/run_ffmpeg_vble_odd_chroma_disclosure_reproducer.py to record the six visible marker bytes.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "floor-divided 4:2:0 chroma geometry leaves visible samples unwritten and returns prior frame-buffer contents",
+        "steps": [
+          {
+            "file": "libavcodec/vble.c",
+            "line": 184,
+            "function": "vble_decode_init",
+            "code_snippet": "avctx->pix_fmt = AV_PIX_FMT_YUV420P;",
+            "note": "The decoder fixes output to a format whose chroma planes use ceiling-subsampled dimensions."
+          },
+          {
+            "file": "libavcodec/vble.c",
+            "line": 187,
+            "function": "vble_decode_init",
+            "code_snippet": "ctx->size = av_image_get_buffer_size(avctx->pix_fmt, avctx->width, avctx->height, 1);",
+            "note": "For 3x3 YUV420P the generic helper correctly counts nine luma plus two 2x2 chroma planes, or seventeen symbols."
+          },
+          {
+            "file": "libavcodec/vble.c",
+            "line": 125,
+            "function": "vble_decode_frame",
+            "code_snippet": "int width_uv = avctx->width / 2, height_uv = avctx->height / 2;",
+            "note": "The decoder incorrectly reduces each 3-pixel dimension to one rather than the required ceiling value two."
+          },
+          {
+            "file": "libavcodec/vble.c",
+            "line": 157,
+            "function": "vble_decode_frame",
+            "code_snippet": "vble_restore_plane(ctx, pic, &gb, 1, offset, width_uv, height_uv);",
+            "note": "Only U[0,0] is written; the remaining three visible U samples preserve the marker."
+          },
+          {
+            "file": "libavcodec/vble.c",
+            "line": 160,
+            "function": "vble_decode_frame",
+            "code_snippet": "vble_restore_plane(ctx, pic, &gb, 2, offset, width_uv, height_uv);",
+            "note": "The identical floor geometry leaves three visible V samples unwritten."
+          },
+          {
+            "file": "libavcodec/vble.c",
+            "line": 163,
+            "function": "vble_decode_frame",
+            "code_snippet": "*got_frame = 1;",
+            "note": "The public decoder returns the partially initialized frame without clearing or rejecting odd geometry."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/vble.c",
+        "start": 117,
+        "end": 201
+      }
+    ]
   }
 ]

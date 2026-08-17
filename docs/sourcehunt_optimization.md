@@ -3477,3 +3477,110 @@ and their committed manifest and SHA-256 exactly. The next exact-path manifest
 seals ranks 1429–1452 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1429_1452.json` with SHA-256
 `bdc9eb6015cda6b0e43b16048087649733c64ec87d611d3f5290ffa1db288bd4`.
+
+### Blind wave 1429–1452 and three disclosure/injection roots
+
+The wave completed source-bearing work on all 24 exact paths in one natural
+session. It settled 788 model calls using 6,815,368 input tokens and 187,020
+output tokens, 7,002,388 total, and made 168 candidate/finding calls. The
+online scaffold submitted no formal findings; one attempted generic
+large-packet IMX report was rejected by the proof-refinement gate.
+
+Offline review confirmed an MVC2 uninitialized-stack disclosure. The decoder
+stores 128 palette entries in an uninitialized automatic array, initializes
+only the packet-declared count, then uses later seven-bit palette indices
+without checking them against that count. An eight-byte public packet declares
+a 4x4 frame and zero colors, then selects index zero. Compiling the unchanged
+vulnerable decoder source as the public registry symbol with deterministic
+pattern and zero automatic-variable initialization produces
+`pixel=aaaaaaaa` and `pixel=00000000` respectively. The correct repair is to
+reject each undeclared index; zero initialization is only the differential
+proof.
+
+The durable MVC2 artifacts are
+`evaluations/ffmpeg_mvc2_palette_disclosure_reproducer.c` and
+`evaluations/run_ffmpeg_mvc2_palette_disclosure_reproducer.py`. The ignored
+proof record reports `expected_observed=true` at pinned FFmpeg commit
+`795bccdaf57772b1803914dee2f32d52776518e2` and preserves both public-decoder
+outputs.
+
+MermaidHTML graph output contains an independent stored output-injection/XSS
+root. `graphprint.c` passes the input `AVFormatContext` URL to the Mermaid text
+formatter, which substitutes only double quotes before writing the value as
+HTML markup. MermaidHTML inserts that diagram inside the standalone report's
+`<pre class="mermaid">`; a pre element does not suppress nested tag parsing.
+An input filename containing `<img src=x onerror=alert(4242)>` consequently
+creates an active image element with the event-handler attribute when the
+report is opened. Scope requires an operator to request MermaidHTML output and
+open a report containing an attacker-influenced URL or filename.
+
+The Mermaid proof is
+`evaluations/run_ffmpeg_mermaidhtml_injection_reproducer.py`. It invokes the
+public ffmpeg graph-output path, then validates the generated report with
+Python's HTML parser without opening a browser. The ignored proof record
+reports `expected_observed=true` and records an `img` element with exactly
+`src=x` and `onerror=alert(4242)` inside the Mermaid pre element.
+
+VBLE exposes a third, separate information disclosure. It forces YUV420P and
+uses `av_image_get_buffer_size()` for the complete image, but restores both
+chroma planes with floor-divided `width / 2` and `height / 2`. The visible
+chroma dimensions are ceiling-divided for odd YUV420P geometry. A valid 3x3
+public decoder packet therefore has logical 2x2 U and V planes while VBLE
+writes only the first sample of each. A public `get_buffer2` callback fills the
+codec-owned frame with `0xA5`; the returned output is
+`u=00a5/a5a5 v=00a5/a5a5`, proving that six visible chroma samples retain
+prior buffer contents.
+
+The durable VBLE artifacts are
+`evaluations/ffmpeg_vble_odd_chroma_disclosure_reproducer.c` and
+`evaluations/run_ffmpeg_vble_odd_chroma_disclosure_reproducer.py`. Its ignored
+ASan proof record reports `expected_observed=true` and preserves the six
+visible marker bytes.
+
+The remaining candidates close under concrete bounds and contracts. The safe
+bit reader and mandatory packet padding contain Golomb probes; SGI's seek
+helper clamps offsets and generic dimension validation rejects zero geometry.
+DSI CIN and IMX apply integer, file-size, and chunked-read limits; IMX's 768
+palette-byte maximum maps exactly to its 1,024-byte palette, while a declared
+packet size does not create allocation amplification beyond supplied data.
+MOFLEX uses `av_append_packet()`, which grows storage before each read, and
+WebVTT operates on NUL-terminated subtitle chunks. Attached-picture callers
+include mandatory padding, and the shared extradata helper rejects negative
+and near-`INT_MAX` sizes.
+
+The MIPS pixel helpers retain fixed codec-owned 8x8/16x8 geometry. PGS's
+segment cursor starts below `INT_MAX` and adds at most 65,538, so its unsigned
+sum cannot wrap. AptX receives framework-sized frames padded to a four-sample
+boundary, and FDK AAC's allocation follows the library's documented
+768-byte-per-channel maximum. Median clips radii before allocating its
+scratch state. Neighbor OpenCL and stack VAAPI preserve negotiated plane,
+hardware-format, and validated-region contracts; the proposed VAAPI-to-USPP
+trace connected unrelated filters. Agate and sidechain compression negotiate
+their input/FIFO layouts. Axcorrelate's maximum window index is
+`available - 1`; on its first invocation `s->used` remains false throughout
+the channel loop, so each channel initializes its own accumulator.
+
+TPad's apparent NULL clone requires activation with no queued frame, no EOF,
+and no output request. The scheduler only makes the filter ready there because
+one of those states changed: a queued frame takes the peek branch, EOF takes
+the status branch, and an output request makes `FF_FILTER_FORWARD_WANTED`
+return before the clone. TLS callers initialize their `AVBPrint` objects.
+Float swscale dithering uses a power-of-two matrix: the block-aligned base plus
+31 remains inside each padded matrix row, including the production 16x16 Bayer
+case. HSV keying retains negotiated plane bounds. No post-snapshot change on
+these paths supplies a contrary security repair oracle.
+
+The user-supplied H.264 slice-table chain remains strong independent
+corroboration of `h264-slice-sentinel-collision`: its `0xFFFF` poison,
+deblocking-only equality, spare stride column, `top_borders[-1]`, and 96-byte
+underflow align with the recorded mechanism. It is not counted again.
+
+The three new roots raise the totals to 94 confirmed root causes and 83
+dynamically reproduced issues. Coverage is 1,452/4,995 (29.07%), with 3,543
+historically ranked files remaining.
+
+Directly slicing the unchanged deterministic order reproduces ranks 1429–1452
+and their committed manifest and SHA-256 exactly. The next exact-path manifest
+seals ranks 1453–1476 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1453_1476.json` with SHA-256
+`e6343e4a35fd0bd076fe22c36d6f3c17b60066095853647ae086f10094ea645c`.
