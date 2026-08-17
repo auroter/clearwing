@@ -3925,3 +3925,43 @@ Direct deterministic regeneration reproduces ranks 1549–1572 exactly and seals
 ranks 1573–1596 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1573_1596.json` with SHA-256
 `bd5f9ebf46a59e19f7311562d1077f48581ddc8edc60e487626a78e58598db42`.
+
+### Blind wave 1573–1596 and zero surviving roots
+
+The wave completed source-bearing work on all 24 exact paths in one session. It
+settled 803 model calls using 7,171,918 input tokens and 202,243 output tokens,
+7,374,161 total, and made 186 raw candidate/finding calls. The online scaffold
+retained no formal finding, and offline invariant review recovered no new root.
+
+The strongest apparent edge accesses close under exact loop bounds. Phase starts
+at row one and processes only through row `h - 3`, so its two-row lookahead
+reaches at most the final valid row while its one-row lookbehind reaches row
+zero. PNM's previous-byte tests follow an unavoidable advance over the validated
+magic and token bytes. Weave allocates double-height output planes and removes
+the one excess subsampled field row with its compensation term.
+
+The remaining candidates close under syntax, option, and allocation contracts.
+AV1 CBS bounds both tile-group endpoints by the parsed tile count; GIF sub-block
+lengths are one byte against a 256-byte array; and the range coder's two-byte
+bootstrap is covered by mandatory packet padding. AFreqShift's runtime order is
+still option-bounded by `MAX_NB_COEFFS`, Hilbert caps each copy by its remaining
+tap count, Scroll normalizes finite positions before subsampling, and
+MergePlanes validates every configured input and plane before processing.
+
+Frei0r's tight intermediary is copied row-wise by the generic frame helper.
+Buffer-source frames are documented to conform to their configured parameters;
+the CUDA, AMF, Vulkan, and DRM paths likewise consume negotiated or
+framework-owned hardware-frame geometry and descriptors. ASS extradata size and
+storage are one public codec-context contract, while SAUCE dimensions pass
+generic image validation before allocation. The AHX and CRI parser leads affect
+framing or bounded progress rather than an allocation, and the libtls null-check
+typo is reachable only if its configuration allocation itself fails.
+
+Totals therefore remain 108 confirmed root causes and 94 dynamically reproduced
+issues. Coverage is 1,596/4,995 (31.95%), with 3,399 historically ranked files
+remaining.
+
+Direct deterministic regeneration reproduces ranks 1573–1596 exactly and seals
+ranks 1597–1620 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1597_1620.json` with SHA-256
+`709c7efda0610a1f58a3c97987dc9f4e90ac4ab034334e8f8e0704f90d493658`.
