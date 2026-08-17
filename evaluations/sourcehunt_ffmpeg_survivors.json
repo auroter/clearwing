@@ -5329,5 +5329,205 @@
         "end": 693
       }
     ]
+  },
+  {
+    "case_id": "bethsoftvid-truncated-literal-disclosure",
+    "finding": {
+      "id": "ffmpeg-bethsoftvid-truncated-literal-disclosure",
+      "finding_type": "information_disclosure",
+      "cwe": "CWE-200",
+      "file": "libavcodec/bethsoftvideo.c",
+      "line_number": 142,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "The Bethsoft VID decoder uses the checked bytestream copy for literal runs but ignores its short-copy return value. It advances output state by the complete attacker-declared run and publishes the frame even when the packet contains none of those literal bytes. A public two-byte I-frame packet declares one literal pixel and omits its payload; a get_buffer2 callback fills the codec-owned 2x2 PAL8 frame with 0xA5, and the decoder succeeds with all four visible pixels still equal to the allocator marker (`a5a5/a5a5`). The bundled demuxer rejects a short literal read, but public decoder packets and alternate producers reach the vulnerable decoder contract directly.",
+      "code_snippet": "if (code < 0x80) bytestream2_get_buffer(&vid->g, dst, length); ... *got_frame = 1;",
+      "poc": "Configure the pinned FFmpeg tree with the Bethsoft VID decoder, then run evaluations/run_ffmpeg_bethsoft_truncated_frame_disclosure_reproducer.py. Its ignored report records all four visible marker bytes and expected_observed=true.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a truncated literal run copies zero bytes, its short count is discarded, and the decoder publishes prior frame-buffer contents",
+        "steps": [
+          {
+            "file": "libavcodec/bethsoftvideo.c",
+            "line": 81,
+            "function": "bethsoftvid_decode_frame",
+            "code_snippet": "bytestream2_init(&vid->g, avpkt->data, avpkt->size);",
+            "note": "The public decoder initializes a bounded reader over the complete attacker packet."
+          },
+          {
+            "file": "libavcodec/bethsoftvideo.c",
+            "line": 124,
+            "function": "bethsoftvid_decode_frame",
+            "code_snippet": "while ((code = bytestream2_get_byte(&vid->g))) { int length = code & 0x7f;",
+            "note": "The proof's second and final byte declares a one-pixel literal run."
+          },
+          {
+            "file": "libavcodec/bethsoftvideo.c",
+            "line": 142,
+            "function": "bethsoftvid_decode_frame",
+            "code_snippet": "bytestream2_get_buffer(&vid->g, dst, length);",
+            "note": "No payload remains, so the checked helper copies zero bytes, but the return value is ignored."
+          },
+          {
+            "file": "libavcodec/bethsoftvideo.c",
+            "line": 145,
+            "function": "bethsoftvid_decode_frame",
+            "code_snippet": "remaining -= length; dst += length;",
+            "note": "Output state advances by the declared length rather than the number of bytes actually copied."
+          },
+          {
+            "file": "libavcodec/bethsoftvideo.c",
+            "line": 153,
+            "function": "bethsoftvid_decode_frame",
+            "code_snippet": "*got_frame = 1;",
+            "note": "The decoder returns the untouched marker-filled frame as a successful public output."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/bethsoftvideo.c",
+        "start": 69,
+        "end": 156
+      },
+      {
+        "path": "libavcodec/bytestream.h",
+        "start": 260,
+        "end": 282
+      }
+    ]
+  },
+  {
+    "case_id": "fieldhint-odd-height-bottom-field-oob-read",
+    "finding": {
+      "id": "ffmpeg-fieldhint-odd-height-bottom-field-oob-read",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavfilter/vf_fieldhint.c",
+      "line_number": 254,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "fieldhint copies both top and bottom fields with ceiling-half plane height. The bottom copy starts one input linesize into the plane and advances by two lines, so an odd-height plane's final iteration reads logical row `height`, one row beyond the input. Default FFmpeg frames contain alignment padding, but the public buffer source accepts valid refcounted exact-size planes. A 1x1 gray buffer-to-fieldhint-to-buffersink graph therefore starts its sole bottom-field read exactly after a one-byte input allocation; ASan reports a one-byte heap-buffer-overflow in av_image_copy_plane.",
+      "code_snippet": "av_image_copy_plane(out->data[p] + out->linesize[p], ..., bottom->data[p] + bfactor * bottom->linesize[p], ..., (s->planeheight[p] + 1) / 2);",
+      "poc": "Configure the pinned FFmpeg tree with fieldhint, then run evaluations/run_ffmpeg_fieldhint_odd_height_reproducer.py. Its ignored report records a one-byte ASan read immediately after the exact input plane and expected_observed=true.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "ceiling-half row count is correct for the top field but makes the bottom field read one row beyond every odd-height exact input plane",
+        "steps": [
+          {
+            "file": "libavfilter/vf_fieldhint.c",
+            "line": 134,
+            "function": "filter_frame",
+            "code_snippet": "s->frame[2] = in;",
+            "note": "The public buffer source's refcounted exact-size frame enters fieldhint without being copied into padded storage."
+          },
+          {
+            "file": "libavfilter/vf_fieldhint.c",
+            "line": 200,
+            "function": "filter_frame",
+            "code_snippet": "top = s->frame[1 + tf]; bottom = s->frame[1 + bf];",
+            "note": "A valid relative hint of 0,0 selects the exact one-row frame for both fields."
+          },
+          {
+            "file": "libavfilter/vf_fieldhint.c",
+            "line": 254,
+            "function": "filter_frame",
+            "code_snippet": "av_image_copy_plane(out->data[p] + out->linesize[p], out->linesize[p] * 2, bottom->data[p] + bfactor * bottom->linesize[p], bottom->linesize[p] * 2, s->planewidth[p], (s->planeheight[p] + 1) / 2);",
+            "note": "For height one, the source begins at row one and one row is copied, reading immediately after the complete input allocation."
+          },
+          {
+            "file": "evaluations/ffmpeg_fieldhint_odd_height_reproducer.c",
+            "line": 30,
+            "function": "make_tight_frame",
+            "code_snippet": "frame->buf[0] = av_buffer_alloc(1);",
+            "note": "The durable public graph proof supplies the exact one-byte backing required by a valid 1x1 gray frame."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/vf_fieldhint.c",
+        "start": 124,
+        "end": 261
+      },
+      {
+        "path": "libavfilter/buffersrc.c",
+        "start": 180,
+        "end": 280
+      }
+    ]
+  },
+  {
+    "case_id": "fftfilt-expression-coordinate-oob-read",
+    "finding": {
+      "id": "ffmpeg-fftfilt-expression-coordinate-oob-read",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavfilter/vf_fftfilt.c",
+      "line_number": 110,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "fftfilt exposes weight_Y, weight_U, and weight_V as two-argument functions in its public weight expression language. The shared lum helper casts both expression results to int and indexes an allocated FFT plane without checking either coordinate. A valid 16x16 buffer-to-fftfilt-to-buffersink graph configured with `weight_Y=weight_Y(100,0)` reaches the lookup during graph configuration; ASan reports a four-byte heap read in weight_Y, 768 bytes beyond the 8,192-byte FFT allocation. Scope requires an application or operator to accept an untrusted fftfilt weight expression.",
+      "code_snippet": "return s->rdft_vdata_out[plane][(int)x * s->rdft_vstride[plane] + (int)y];",
+      "poc": "Configure the pinned FFmpeg tree with fftfilt, then run evaluations/run_ffmpeg_fftfilt_expression_oob_reproducer.py. Its ignored report records the public graph configuration ASan abort and expected_observed=true.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "arbitrary public expression coordinates reach an FFT-plane lookup with no coordinate bounds and read beyond its heap allocation",
+        "steps": [
+          {
+            "file": "libavfilter/vf_fftfilt.c",
+            "line": 274,
+            "function": "initialize",
+            "code_snippet": "const char *const func2_names[] = {\"weight_Y\", \"weight_U\", \"weight_V\", NULL };",
+            "note": "The filter registers all three lookup functions for direct use by public AVOption expressions."
+          },
+          {
+            "file": "libavfilter/vf_fftfilt.c",
+            "line": 357,
+            "function": "config_props",
+            "code_snippet": "s->rdft_vdata_out[i] = av_calloc(s->rdft_hstride[i], s->rdft_vstride[i] * sizeof(float));",
+            "note": "Each lookup plane has a finite hstride-by-vstride allocation."
+          },
+          {
+            "file": "libavfilter/vf_fftfilt.c",
+            "line": 302,
+            "function": "do_eval",
+            "code_snippet": "av_expr_eval(s->weight_expr[plane], values, s);",
+            "note": "The configured expression is evaluated during graph configuration in the default init mode."
+          },
+          {
+            "file": "libavfilter/vf_fftfilt.c",
+            "line": 110,
+            "function": "lum",
+            "code_snippet": "return s->rdft_vdata_out[plane][(int)x * s->rdft_vstride[plane] + (int)y];",
+            "note": "The expression's x=100 and y=0 are cast and indexed without comparison to hstride or vstride."
+          },
+          {
+            "file": "evaluations/ffmpeg_fftfilt_expression_oob_reproducer.c",
+            "line": 32,
+            "function": "main",
+            "code_snippet": "create_filter(&fftfilt, graph, \"fftfilt\", \"fftfilt\", \"weight_Y=weight_Y(100,0)\")",
+            "note": "The durable public graph proof triggers the four-byte ASan read before any media frame is required."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/vf_fftfilt.c",
+        "start": 90,
+        "end": 125
+      },
+      {
+        "path": "libavfilter/vf_fftfilt.c",
+        "start": 252,
+        "end": 382
+      }
+    ]
   }
 ]

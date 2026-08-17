@@ -3745,3 +3745,74 @@ Directly slicing the unchanged 4,995-file deterministic order reproduces ranks
 seals ranks 1501–1524 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1501_1524.json` with SHA-256
 `10c36e53b2d38a99999a2bb951a81f0c2bfce634d958acc6b0fe559d83887d04`.
+
+### Blind wave 1501–1524 and three dynamically reproduced roots
+
+The wave completed source-bearing work on all 24 exact paths. It settled 838
+model calls using 7,560,110 input tokens and 189,535 output tokens, 7,749,645
+total, and recorded 211 raw candidate/finding calls. The online scaffold retained
+no formal finding; offline invariant review recovered three distinct roots.
+
+Bethsoft VID accepts a truncated literal run because both checked
+`bytestream2_get_buffer()` calls discard the actual copied-byte count. A public
+two-byte I-frame packet declares one literal pixel but supplies no payload, yet
+the decoder advances by the declared length and publishes its frame. The durable
+marker-filled `get_buffer2` proof returns a successful 2x2 PAL8 frame with all
+four visible pixels still equal to `0xA5` (`a5a5/a5a5`). The bundled demuxer
+rejects its own short literal reads, so this root's input surface is a public
+decoder packet or another packet producer.
+
+fieldhint uses ceiling-half height for both field copies. That is correct for the
+top field, but the bottom field begins at input row one and advances by two rows;
+on every odd plane height its final iteration therefore reads row `height`.
+FFmpeg's ordinary padded frames mask the allocation boundary, while the public
+buffer source validly accepts refcounted exact-size planes. A 1x1 gray
+`buffer -> fieldhint -> buffersink` proof with a complete one-byte backing makes
+ASan report a one-byte heap read immediately after that allocation in
+`av_image_copy_plane()`.
+
+fftfilt registers `weight_Y`, `weight_U`, and `weight_V` as public two-argument
+expression functions. Their shared `lum()` helper casts both results to integers
+and indexes the FFT plane without comparing either coordinate with its allocated
+strides. Configuring a valid 16x16 public graph with
+`weight_Y=weight_Y(100,0)` makes ASan report a four-byte read in `weight_Y`, 768
+bytes beyond an 8,192-byte allocation during graph configuration. This root
+requires control of the fftfilt expression.
+
+The durable artifacts are the three matching C harnesses and runners:
+`evaluations/run_ffmpeg_bethsoft_truncated_frame_disclosure_reproducer.py`,
+`evaluations/run_ffmpeg_fieldhint_odd_height_reproducer.py`, and
+`evaluations/run_ffmpeg_fftfilt_expression_oob_reproducer.py`. Their ignored
+reports all record the pinned commit and `expected_observed=true`.
+
+The remaining candidates close under concrete contracts. AVS3 parser reads stay
+inside mandatory zeroed packet padding, PVA truncation is handled by packet
+reads, and Blend, DRMeter, Exposure, Acrossover, Yaepblur, and Silenceremove
+retain negotiated frame or circular-buffer geometry. FFTFilt's ordinary transform
+strides exceed its loop bounds; only its callable expression lookup violates an
+allocation. D3D11 surface indices are pool-produced, and caller-forged hardware
+frames remain outside the media-input root set. VC-1, G.722, CBS H.264, MPEG
+error recovery, and VP9 reorder paths preserve their codec-owned array domains.
+
+SDR2's unsigned sizes convert to negative `int` arguments and are rejected before
+allocation rather than wrapping to a small successful packet. TIFF's `count > 4`
+short-circuit forces offset seeking before its multiplication can matter. MOV
+channel-map loops are bounded by their allocated channel counts, while the later
+temporary-layout repair does not apply to the pinned ownership model. The LUT3D
+base index is mathematically at most `size - 1`; its later padding change removes
+clamping for speed rather than repairing an over-read. VAAPI Scale's later error
+propagation change follows post-snapshot dimension validation and does not expose
+a pinned allocation violation. TCP and timer paths are either lifecycle-safe or
+developer-only instrumentation.
+
+The user-supplied H.264 slice-table chain remains independent corroboration of
+`h264-slice-sentinel-collision` and is not counted again.
+
+The three new roots raise the totals to 104 confirmed root causes and 90
+dynamically reproduced issues. Coverage is 1,524/4,995 (30.51%), with 3,471
+historically ranked files remaining.
+
+Direct deterministic regeneration reproduces the committed ranks 1501–1524 and
+seals ranks 1525–1548 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1525_1548.json` with SHA-256
+`073d8f2ec03c7d492d463cccd6bc07220a5fe2ad189e6556230180b478b36076`.
