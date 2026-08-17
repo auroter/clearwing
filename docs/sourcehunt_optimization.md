@@ -3816,3 +3816,48 @@ Direct deterministic regeneration reproduces the committed ranks 1501–1524 and
 seals ranks 1525–1548 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1525_1548.json` with SHA-256
 `073d8f2ec03c7d492d463cccd6bc07220a5fe2ad189e6556230180b478b36076`.
+
+### Blind wave 1525–1548 and the OpenColorIO format-contract root
+
+The wave completed source-bearing work on all 24 exact paths in one session. It
+settled 831 model calls using 7,345,178 input tokens and 172,104 output tokens,
+7,517,282 total, and made 205 raw candidate/finding calls. The online scaffold
+retained no formal finding; offline invariant review recovered one root.
+
+OpenColorIO's public `format` option independently selects the pixel format used
+to allocate its output frame, but `query_formats()` assigns one common format
+set to both links and never advertises that selected output. A valid
+`GBRPF32 -> ocio=format=rgb24 -> geq -> buffersink` graph consequently leaves
+the downstream link negotiated as three-plane GBRPF32 while emitting a
+one-plane RGB24 frame. GEQ configures three float planes from the negotiated
+link and its public sum expressions then dereference a missing plane.
+
+`evaluations/run_ffmpeg_opencolorio_format_mismatch_reproducer.py` is the
+durable proof. This machine lacks libOpenColorIO, so the harness stubs only a
+successful external transform call; pinned FFmpeg still performs graph
+negotiation, RGB24 allocation, emission on the GBRPF32 link, and the downstream
+access. The ignored report records `negotiated=gbrpf32le selected=rgb24` and an
+ASan zero-page read in `geq_filter_frame`, with `expected_observed=true`.
+
+The ordinary candidates close under concrete contracts. PAL8 frames reserve a
+fixed 1,024-byte palette; H.263 qscale remains in its decoded range; codec edge
+and packet padding cover the examined speculative reads; paired filter frames
+retain the same negotiated layout; and coordinate paths clip or wrap before
+access. The entropy-state indices are bounded by their state machines, while
+libdc1394 packet/frame ownership is retained through packet refcounting.
+
+The user-supplied H.264 slice-table chain again independently confirms
+`h264-slice-sentinel-collision`: the 16-bit `0xFFFF` poison and spare stride
+column collide with slice 65535, the deblocking-only top-left equality enables
+`top_borders[-1]`, and the luma/chroma exchanges write through the 96-byte heap
+underflow. Repair `6d57428858` rejects `current_slice >= 0xFFFE` before the
+increment. This is corroboration of the existing root and is not counted again.
+
+The new root raises the totals to 105 confirmed root causes and 91 dynamically
+reproduced issues. Coverage is 1,548/4,995 (30.99%), with 3,447 historically
+ranked files remaining.
+
+Direct deterministic regeneration reproduces ranks 1525–1548 exactly and seals
+ranks 1549–1572 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1549_1572.json` with SHA-256
+`a25deba0d3b601d7b4b9c5e75cdc43e44198571321ed58cc035a6b793d1aa2b1`.

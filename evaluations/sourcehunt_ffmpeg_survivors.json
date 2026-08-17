@@ -5529,5 +5529,86 @@
         "end": 382
       }
     ]
+  },
+  {
+    "case_id": "opencolorio-output-format-contract-null-deref",
+    "finding": {
+      "id": "ffmpeg-opencolorio-output-format-contract-null-deref",
+      "finding_type": "null_pointer_dereference",
+      "cwe": "CWE-476",
+      "file": "libavfilter/vf_opencolorio.c",
+      "line_number": 206,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "The OpenColorIO filter accepts a public output pixel-format option and allocates its output AVFrame in that selected format, but query_formats() gives every input and output link the same common format list and never advertises the selected output separately. A valid GBRPF32 graph configured with `ocio=format=rgb24` therefore negotiates GBRPF32 on the downstream link while emitting a one-plane RGB24 frame on it. In the durable proof, the next GEQ filter configures three 32-bit float planes from the negotiated link; its public plane-sum expressions then dereference the missing RGB24 plane and ASan reports a zero-page read in geq_filter_frame. The machine lacks libOpenColorIO, so the proof stubs only a successful external transform call while executing the pinned FFmpeg negotiation, allocation, and downstream filter code.",
+      "code_snippet": "return ff_set_common_formats(ctx, ff_make_format_list(pix_fmts)); ... output_frame->format = s->output_format; ... return ff_filter_frame(ctx->outputs[0], output_frame);",
+      "poc": "Run evaluations/run_ffmpeg_opencolorio_format_mismatch_reproducer.py against the configured pinned tree. Its ignored report records `negotiated=gbrpf32le selected=rgb24`, the GEQ zero-page ASan read, and expected_observed=true.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a user-selected OCIO output format changes the emitted frame allocation without changing the negotiated output link, so a downstream filter dereferences planes promised by the link but absent from the frame",
+        "steps": [
+          {
+            "file": "libavfilter/vf_opencolorio.c",
+            "line": 79,
+            "function": "query_formats",
+            "code_snippet": "return ff_set_common_formats(ctx, ff_make_format_list(pix_fmts));",
+            "note": "The shared format set forces input and output to negotiate the same GBRPF32 format; the public output-format option is not represented."
+          },
+          {
+            "file": "libavfilter/vf_opencolorio.c",
+            "line": 130,
+            "function": "init",
+            "code_snippet": "s->output_format = av_get_pix_fmt(s->out_format_string);",
+            "note": "The proof independently selects packed one-plane RGB24 through the public `format` AVOption."
+          },
+          {
+            "file": "libavfilter/vf_opencolorio.c",
+            "line": 206,
+            "function": "filter_frame",
+            "code_snippet": "output_frame->format = s->output_format;",
+            "note": "FFmpeg allocates the transformed frame as RGB24 even though the downstream link remains GBRPF32."
+          },
+          {
+            "file": "libavfilter/vf_opencolorio.c",
+            "line": 238,
+            "function": "filter_frame",
+            "code_snippet": "return ff_filter_frame(ctx->outputs[0], output_frame);",
+            "note": "The mismatched RGB24 frame is emitted directly on the negotiated GBRPF32 output link."
+          },
+          {
+            "file": "libavfilter/vf_geq.c",
+            "line": 389,
+            "function": "geq_config_props",
+            "code_snippet": "geq->planes = desc->nb_components;",
+            "note": "GEQ trusts the negotiated GBRPF32 descriptor and configures three 32-bit float planes."
+          },
+          {
+            "file": "libavfilter/vf_geq.c",
+            "line": 200,
+            "function": "calculate_sums",
+            "code_snippet": "linesum += src32[xi + yi * linesize];",
+            "note": "The RGB24 frame has no second or third plane, so a public GEQ sum expression reads through a NULL plane pointer."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/vf_opencolorio.c",
+        "start": 65,
+        "end": 239
+      },
+      {
+        "path": "libavfilter/vf_geq.c",
+        "start": 165,
+        "end": 210
+      },
+      {
+        "path": "libavfilter/vf_geq.c",
+        "start": 379,
+        "end": 505
+      }
+    ]
   }
 ]
