@@ -5610,5 +5610,217 @@
         "end": 505
       }
     ]
+  },
+  {
+    "case_id": "dvdsub-parser-chunk-size-overflow",
+    "finding": {
+      "id": "ffmpeg-dvdsub-parser-chunk-size-overflow",
+      "finding_type": "integer_overflow",
+      "cwe": "CWE-190",
+      "file": "libavcodec/dvdsub_parser.c",
+      "line_number": 63,
+      "severity": "high",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The DVD subtitle parser buffers partial declared packets but checks whether the next public parser chunk fits by adding two signed ints before comparing with packet_len. After a small prefix leaves packet_index positive, an INT_MAX-sized chunk makes packet_index + buf_size overflow negative and pass the upper-bound check. memcpy then uses the original enormous positive buf_size against the declared packet allocation. The durable proof virtually maps the complete INT_MAX-byte source, leaves packet_index at 2 for an eight-byte declared packet, and ASan reports a 2,147,483,647-byte heap write immediately after the 72-byte packet-plus-padding allocation. Later FFmpeg repair 1b5cd3a792 changes the check to buf_size <= packet_len - packet_index and explicitly cites signed integer overflow and out-of-array access.",
+      "code_snippet": "if (pc->packet_index + buf_size <= pc->packet_len) { memcpy(pc->packet + pc->packet_index, buf, buf_size);",
+      "poc": "Run evaluations/run_ffmpeg_dvdsub_parser_size_overflow_reproducer.py against the configured pinned tree. Its ignored report records the signed-sum boundary, the full virtually mapped source, the ASan oversized heap write, and expected_observed=true.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a positive partial-packet index and a very large public parser chunk overflow the signed addition used as the only destination bound, admitting an enormous copy into the small declared-packet allocation",
+        "steps": [
+          {
+            "file": "libavcodec/parser.c",
+            "line": 124,
+            "function": "av_parser_parse2",
+            "code_snippet": "int av_parser_parse2(..., const uint8_t *buf, int buf_size, ...)",
+            "note": "The public parser API accepts the chunk length as a nonnegative int and forwards it to the codec parser callback."
+          },
+          {
+            "file": "libavcodec/dvdsub_parser.c",
+            "line": 52,
+            "function": "dvdsub_parse",
+            "code_snippet": "pc->packet_len = AV_RB16(buf);",
+            "note": "The proof declares an eight-byte subtitle packet; FFmpeg allocates packet_len plus 64 bytes of mandatory padding."
+          },
+          {
+            "file": "libavcodec/dvdsub_parser.c",
+            "line": 63,
+            "function": "dvdsub_parse",
+            "code_snippet": "if (pc->packet_index + buf_size <= pc->packet_len)",
+            "note": "With packet_index 2 and buf_size INT_MAX, the signed sum overflows negative and the destination-length check succeeds."
+          },
+          {
+            "file": "libavcodec/dvdsub_parser.c",
+            "line": 64,
+            "function": "dvdsub_parse",
+            "code_snippet": "memcpy(pc->packet + pc->packet_index, buf, buf_size);",
+            "note": "The unmodified positive INT_MAX length becomes a 2,147,483,647-byte write into the 72-byte heap allocation; ASan reproduces it."
+          },
+          {
+            "file": "libavcodec/dvdsub_parser.c",
+            "line": 63,
+            "function": "dvdsub_parse",
+            "code_snippet": "if (buf_size <= pc->packet_len - pc->packet_index)",
+            "note": "Exact later repair 1b5cd3a792 avoids the overflowing addition and independently confirms the root."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/dvdsub_parser.c",
+        "start": 36,
+        "end": 86
+      },
+      {
+        "path": "libavcodec/parser.c",
+        "start": 124,
+        "end": 205
+      }
+    ]
+  },
+  {
+    "case_id": "deblock-partial-tail-tight-stride-oob",
+    "finding": {
+      "id": "ffmpeg-deblock-partial-tail-tight-stride-oob",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavfilter/vf_deblock.c",
+      "line_number": 256,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The deblock filter invokes its vertical kernel at every block boundary while x < visible plane width, including a final partial block with fewer right-side pixels than the kernel radius. The strong kernel unconditionally reads through x + 2 before conditionally writing the same radius. Because writable frames are modified in place, a valid public buffer source can move in a refcounted frame whose linesize and allocation are exactly the visible width rather than FFmpeg's usual padded stride. In the durable 9x8 gray proof, block boundary x=8 has only the boundary pixel remaining; on the eighth processed row, deblockv8_strong reads one byte immediately after the exact 72-byte heap allocation and ASan aborts. Threshold-satisfying data would also reach the x+1/x+2 writes.",
+      "code_snippet": "for (x = block; x < width; x += block) s->deblockv(dst + x * s->bpc, ...); ... F = dst[+2]; ... dst[+2] = av_clip(f, 0, max);",
+      "poc": "Run evaluations/run_ffmpeg_deblock_tight_stride_reproducer.py against the configured pinned tree. Its ignored report records the 9x8/9-byte-stride geometry, an ASan read immediately after the 72-byte plane, deblockv8_strong in the trace, and expected_observed=true.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a final partial visible block is treated as though it has the strong kernel's full two-pixel right radius, and in-place filtering exposes that speculative radius on a valid tight-stride public frame",
+        "steps": [
+          {
+            "file": "libavfilter/buffersrc.c",
+            "line": 250,
+            "function": "av_buffersrc_add_frame_flags",
+            "code_snippet": "if (refcounted && !(flags & AV_BUFFERSRC_FLAG_KEEP_REF)) { ... av_frame_move_ref(copy, frame); }",
+            "note": "The public buffer source accepts and moves a refcounted exact-size frame without replacing its tight linesize or backing allocation."
+          },
+          {
+            "file": "libavfilter/vf_deblock.c",
+            "line": 310,
+            "function": "filter_frame",
+            "code_snippet": "if (av_frame_is_writable(in)) { out = in; }",
+            "note": "The uniquely owned tight frame is modified in place rather than copied into a padded filter allocation."
+          },
+          {
+            "file": "libavfilter/vf_deblock.c",
+            "line": 335,
+            "function": "filter_frame",
+            "code_snippet": "for (x = block; x < width; x += block)",
+            "note": "Width 9 and block 8 schedule a vertical boundary at x=8 even though no two-pixel right radius remains."
+          },
+          {
+            "file": "libavfilter/vf_deblock.c",
+            "line": 236,
+            "function": "deblockv8_strong",
+            "code_snippet": "F = dst[+2];",
+            "note": "The strong kernel reads through x+2 on every processed row; ASan catches the final-row read immediately after the 72-byte allocation."
+          },
+          {
+            "file": "libavfilter/vf_deblock.c",
+            "line": 250,
+            "function": "deblockv8_strong",
+            "code_snippet": "dst[+2] = av_clip(f, 0, max);",
+            "note": "If the threshold comparisons pass, the same missing radius also receives attacker-influenced writes."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/vf_deblock.c",
+        "start": 165,
+        "end": 257
+      },
+      {
+        "path": "libavfilter/vf_deblock.c",
+        "start": 301,
+        "end": 360
+      },
+      {
+        "path": "libavfilter/buffersrc.c",
+        "start": 220,
+        "end": 268
+      }
+    ]
+  },
+  {
+    "case_id": "zmqsend-reply-size-truncation",
+    "finding": {
+      "id": "ffmpeg-zmqsend-reply-size-truncation",
+      "finding_type": "integer_truncation",
+      "cwe": "CWE-190",
+      "file": "tools/zmqsend.c",
+      "line_number": 152,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The zmqsend utility receives an untrusted ZMQ reply whose length is size_t, adds one for a terminator, and stores the result in signed int recv_buf_size. On a 64-bit two's-complement build, an exact 2^32-1-byte reply makes size+1 truncate to zero. av_malloc(0) returns a one-byte allocation on the pinned Darwin build, while recv_buf_size - 1 is signed -1 and converts to SIZE_MAX for memcpy. The durable proof stubs only the external transport's successful calls and valid size_t message contract, virtually maps the declared reply, and executes pinned tools/zmqsend.c; ASan reports negative-size-param at the memcpy with size=-1. A malicious peer selected through the public -b option controls the reply.",
+      "code_snippet": "recv_buf_size = zmq_msg_size(&msg) + 1; recv_buf = av_malloc(recv_buf_size); ... memcpy(recv_buf, zmq_msg_data(&msg), recv_buf_size - 1);",
+      "poc": "Run evaluations/run_ffmpeg_zmqsend_size_truncation_reproducer.py against the configured pinned tree. Its ignored report records reply_size=4294967295, truncated_int=0, copy_size=SIZE_MAX, ASan negative-size-param in ffmpeg_zmqsend_main, and expected_observed=true.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a malicious peer's size_t reply length crosses a narrower signed storage boundary, producing a one-byte destination and a SIZE_MAX copy",
+        "steps": [
+          {
+            "file": "tools/zmqsend.c",
+            "line": 110,
+            "function": "main",
+            "code_snippet": "if (zmq_connect(socket, bind_address) == -1)",
+            "note": "The public -b option selects the ZMQ peer that supplies the reply."
+          },
+          {
+            "file": "tools/zmqsend.c",
+            "line": 144,
+            "function": "main",
+            "code_snippet": "if (zmq_msg_recv(&msg, socket, 0) == -1)",
+            "note": "A successful external receive publishes the peer-controlled message and its size_t length."
+          },
+          {
+            "file": "tools/zmqsend.c",
+            "line": 152,
+            "function": "main",
+            "code_snippet": "recv_buf_size = zmq_msg_size(&msg) + 1;",
+            "note": "For message size 0xFFFFFFFF, the 64-bit sum 0x100000000 truncates to signed int zero on the reproduced platform."
+          },
+          {
+            "file": "libavutil/mem.c",
+            "line": 144,
+            "function": "av_malloc",
+            "code_snippet": "if(!ptr && !size) { size = 1; ptr = av_malloc(1); }",
+            "note": "The zero allocation request is converted into a non-NULL one-byte heap object."
+          },
+          {
+            "file": "tools/zmqsend.c",
+            "line": 161,
+            "function": "main",
+            "code_snippet": "memcpy(recv_buf, zmq_msg_data(&msg), recv_buf_size - 1);",
+            "note": "Signed -1 converts to SIZE_MAX at the copy API; ASan deterministically reports negative-size-param in the pinned utility."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "tools/zmqsend.c",
+        "start": 55,
+        "end": 170
+      },
+      {
+        "path": "libavutil/mem.c",
+        "start": 98,
+        "end": 153
+      }
+    ]
   }
 ]

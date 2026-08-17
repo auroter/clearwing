@@ -3861,3 +3861,67 @@ Direct deterministic regeneration reproduces ranks 1525–1548 exactly and seals
 ranks 1549–1572 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1549_1572.json` with SHA-256
 `a25deba0d3b601d7b4b9c5e75cdc43e44198571321ed58cc035a6b793d1aa2b1`.
+
+### Blind wave 1549–1572 and three dynamically reproduced roots
+
+The wave completed source-bearing work on all 24 exact paths in one session. It
+settled 802 model calls using 6,876,760 input tokens and 186,290 output tokens,
+7,063,050 total, and made 223 raw candidate/finding calls. Its one formal online
+finding was the ZMQ reply-size truncation below; offline invariant review also
+recovered the DVD subtitle parser and deblock roots.
+
+The DVD subtitle parser buffers partial declared packets but checks the next
+chunk with `packet_index + buf_size <= packet_len`. After a two-byte prefix of
+an eight-byte packet, an `INT_MAX` chunk overflows the signed sum negative and
+admits the original enormous positive length to `memcpy`. The durable proof
+virtually maps the full source range, and ASan reports a 2,147,483,647-byte write
+immediately after the 72-byte packet-plus-padding allocation. Exact later repair
+`1b5cd3a792` replaces the addition with subtraction and explicitly cites signed
+integer overflow and out-of-array access.
+
+Deblock schedules its vertical kernel at every `x < width` block boundary even
+when the final partial block lacks the kernel's two-pixel right radius. It also
+modifies writable inputs in place, so a valid public buffer source can move in a
+refcounted frame with an exact visible linesize and allocation. A tight 9x8 gray
+frame reaches boundary x=8; ASan reports a one-byte read immediately after its
+72-byte plane in `deblockv8_strong`. Threshold-satisfying data also reaches the
+kernel's corresponding `x+1` and `x+2` writes.
+
+Finally, zmqsend stores `zmq_msg_size() + 1` from `size_t` into an `int`. On the
+reproduced 64-bit build, an exact `2^32-1`-byte malicious reply truncates the sum
+to zero. `av_malloc(0)` supplies a one-byte object, while subtracting one makes
+the `memcpy` length `SIZE_MAX`. The durable harness stubs only successful
+external ZMQ transport calls and its public message-size contract; pinned
+`tools/zmqsend.c` reaches ASan `negative-size-param` with size -1.
+
+The three matching runners are
+`evaluations/run_ffmpeg_dvdsub_parser_size_overflow_reproducer.py`,
+`evaluations/run_ffmpeg_deblock_tight_stride_reproducer.py`, and
+`evaluations/run_ffmpeg_zmqsend_size_truncation_reproducer.py`. Their ignored
+reports pin the campaign commit and record `expected_observed=true`.
+
+The remaining candidates close under concrete bounds and contracts. EVC's
+439-iteration maximum fits its 440-entry tile array; RV dimensions are validated
+before consistent macroblock reallocation, and codec-owned frames retain edge
+padding. DFPWM packed audio allocations include every channel, FITS receives
+valid per-plane linesizes, MIPS MP3 synthesis has 1,024-float channel buffers,
+and PAL8 reserves its fixed 1,024-byte palette.
+
+Graph-wide image validation keeps edgedetect products representable. Multiply
+and amultiply consume matching negotiated frame/sample geometries, audio frame
+pools include the vector alignment tail, HQDN3D's centered LUT bounds exactly
+cover its pixel-difference domain, and FFTDNOIZ clamps every partial export.
+TAK's last-frame fields exactly fill their padded 64-bit reader, FSB's THP packet
+and extradata layouts match their channel products, TSCC uses zlib's bounded
+produced-byte count, and AVIO callback sizes are API contracts. The remaining
+graph-parser, TTML, and RTP/AC-3 leads affect ownership-safe lists, timestamps,
+or bounded memory consumption rather than an allocation violation.
+
+The three roots raise the totals to 108 confirmed root causes and 94 dynamically
+reproduced issues. Coverage is 1,572/4,995 (31.47%), with 3,423 historically
+ranked files remaining.
+
+Direct deterministic regeneration reproduces ranks 1549–1572 exactly and seals
+ranks 1573–1596 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1573_1596.json` with SHA-256
+`bd5f9ebf46a59e19f7311562d1077f48581ddc8edc60e487626a78e58598db42`.
