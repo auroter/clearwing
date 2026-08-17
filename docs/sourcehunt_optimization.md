@@ -3212,3 +3212,63 @@ and their committed manifest exactly. The next exact-path manifest seals ranks
 1333–1356 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1333_1356.json` with SHA-256
 `1f0e32f25d1a5f9bef29ffd19edb71d7a0cc62a648892b888c8f0e9aab7f0dac`.
+
+### Blind wave 1333–1356 and the RTP/ASF zero-chunk loop
+
+The wave achieved successful source-bearing work on all 24 exact paths across
+an 18-path initial session and three retries that added two previously
+untouched targets apiece. Together the four sessions used 6,450,962 tokens over
+735 settled model calls and made 145 candidate/finding calls. No formal finding
+was accepted by the online scaffold. Three sessions were interrupted only
+after source work when endpoint reads stalled for several minutes; the final
+two-path retry completed normally.
+
+Offline review confirmed one remotely reachable infinite-loop root. The WMS
+SDP parser base64-decodes an RTSP server-controlled ASF header before calling
+`rtp_asf_fix_header`. A 54-byte decoded payload places an unknown ASF object at
+offset 30 with exactly one 24-byte object header remaining. Its attacker-owned
+64-bit size can be zero: the vulnerable upper-only bound accepts that value,
+`p += chunksize` makes no progress, and the `do/while` condition repeats the
+same object forever. A differential production-function proof times out on the
+pinned build, while exact repair
+`11d5f475be95d22d5f0692220cc772b116abc632` rejects the identical payload and
+returns `-1094995529`. The repair adds the missing minimum-object-size guard and
+explicitly says `Fixes: infinite loop`.
+
+The durable artifacts are
+`evaluations/ffmpeg_rtp_asf_zero_chunk_reproducer.c` and
+`evaluations/run_ffmpeg_rtp_asf_zero_chunk_reproducer.py`. The ignored proof
+record reports `expected_observed=true` at pinned FFmpeg commit
+`795bccdaf57772b1803914dee2f32d52776518e2` and records both sides of the
+timeout/return differential through the production WMS SDP entry.
+
+The remaining terminal leads close under concrete bounds and contracts. V308
+dimensions pass the generic decoder product gate before its arithmetic; FRWU's
+odd-height writes remain inside FFmpeg's 32-row padded frame allocation; and
+M101 packets reserve and validate a full 40-byte stride for each partial 10-bit
+block. VQF bit counts remain bounded with positive packet sizes. H.264 MIPS DSP
+operates on fixed codec-owned blocks, tee's partially opened child array is
+zeroed and excluded by `child_count`, and APETAG caps the outer tag at 16 MiB.
+APV rejects oversized components with a 64-bit bits-left comparison before the
+later integer expression, while its metadata-size underflow fails at the huge
+allocation rather than entering the data loop. OpenCL formats preserve plane
+counts, JPEG2000 DWT buffers include their extension margin, and RFC 2190's
+header minimums, padded RTP storage, and bit-reader bounds contain the
+zero-payload and end-bit cases. The other filter, codec, format, and utility
+paths retain their allocation, frame, or producer contracts.
+
+The user-supplied H.264 slice-table evidence remains an independent
+confirmation of `h264-slice-sentinel-collision`: the `0xFFFF` poison value,
+spare `mb_stride` column, deblocking-only equality, `top_borders[-1]`, and
+96-byte underflow match the recorded mechanism exactly. It is corroboration,
+not a new root, and is not counted again.
+
+The RTP/ASF mechanism raises the totals to 89 confirmed root causes and 78
+dynamically reproduced issues. Coverage is 1,356/4,995 (27.15%), with 3,639
+historically ranked files remaining.
+
+Directly slicing the unchanged deterministic order reproduces ranks 1333–1356
+and their committed manifest and SHA-256 exactly. The next exact-path manifest
+seals ranks 1357–1380 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1357_1380.json` with SHA-256
+`27e4a672fa822e0c96f423beaa4c1ee2bb4b432c4e677fe6342bd5d9aecb4c41`.

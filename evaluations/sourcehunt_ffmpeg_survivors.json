@@ -4335,5 +4335,88 @@
         "end": 350
       }
     ]
+  },
+  {
+    "case_id": "rtp-asf-zero-chunk-infinite-loop",
+    "finding": {
+      "id": "ffmpeg-rtp-asf-zero-chunk-infinite-loop",
+      "finding_type": "infinite_loop",
+      "cwe": "CWE-835",
+      "file": "libavformat/rtpdec_asf.c",
+      "line_number": 61,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The production WMS SDP parser base64-decodes a server-controlled RTSP-MS/ASF header and passes it to rtp_asf_fix_header. A valid 54-byte outer header places the first ASF object at offset 30 with exactly 24 bytes remaining. If that object's GUID differs from the file-header GUID and its 64-bit size is zero, the vulnerable branch's sole upper-bound check accepts it and advances the loop pointer by zero. The do/while condition remains true forever, consuming one RTSP demuxing thread. A differential production-function proof times out on the pinned build, while exact repair 11d5f475be rejects the same payload and returns immediately; the repair explicitly identifies the infinite loop.",
+      "code_snippet": "if (memcmp(p, ff_asf_file_header, sizeof(ff_asf_guid))) { if (chunksize > end - p) return -1; p += chunksize; continue; }",
+      "poc": "Build evaluations/ffmpeg_rtp_asf_zero_chunk_reproducer.c against the pinned and repaired FFmpeg trees, then run evaluations/run_ffmpeg_rtp_asf_zero_chunk_reproducer.py to record the timeout/return differential.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a zero-sized unknown ASF object passes an upper-only size check and leaves every loop predicate unchanged",
+        "steps": [
+          {
+            "file": "libavformat/rtpdec_asf.c",
+            "line": 103,
+            "function": "ff_wms_parse_sdp_a_line",
+            "code_snippet": "if (av_strstart(p, \"pgmpu:data:application/vnd.ms.wms-hdr.asfv1;base64,\", &p))",
+            "note": "An RTSP server controls the base64-encoded WMS SDP attribute entering the production parser."
+          },
+          {
+            "file": "libavformat/rtpdec_asf.c",
+            "line": 50,
+            "function": "rtp_asf_fix_header",
+            "code_snippet": "if (len < sizeof(ff_asf_guid) * 2 + 22 || memcmp(p, ff_asf_header, sizeof(ff_asf_guid))) return -1;",
+            "note": "The proof's 54 decoded bytes and correct outer ASF GUID satisfy the initial structural gate exactly."
+          },
+          {
+            "file": "libavformat/rtpdec_asf.c",
+            "line": 54,
+            "function": "rtp_asf_fix_header",
+            "code_snippet": "p += sizeof(ff_asf_guid) + 14;",
+            "note": "The parser advances to byte 30, leaving one complete 24-byte object header."
+          },
+          {
+            "file": "libavformat/rtpdec_asf.c",
+            "line": 56,
+            "function": "rtp_asf_fix_header",
+            "code_snippet": "uint64_t chunksize = AV_RL64(p + sizeof(ff_asf_guid));",
+            "note": "Eight server-controlled zero bytes make the object size zero."
+          },
+          {
+            "file": "libavformat/rtpdec_asf.c",
+            "line": 59,
+            "function": "rtp_asf_fix_header",
+            "code_snippet": "if (chunksize > end - p) return -1;",
+            "note": "The only vulnerable size check enforces an upper bound, so zero passes."
+          },
+          {
+            "file": "libavformat/rtpdec_asf.c",
+            "line": 61,
+            "function": "rtp_asf_fix_header",
+            "code_snippet": "p += chunksize; continue; ... while (end - p >= sizeof(ff_asf_guid) + 8);",
+            "note": "The pointer advances by zero and 24 bytes still remain, so the loop repeats the identical object indefinitely."
+          },
+          {
+            "file": "libavformat/rtpdec_asf.c",
+            "line": 59,
+            "function": "later repair 11d5f475be",
+            "code_snippet": "if (chunksize < sizeof(ff_asf_guid) + 8) return -1;",
+            "note": "The later repair adds the exact missing progress invariant and explicitly says it fixes an infinite loop."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/rtpdec_asf.c",
+        "start": 46,
+        "end": 77
+      },
+      {
+        "path": "libavformat/rtpdec_asf.c",
+        "start": 100,
+        "end": 152
+      }
+    ]
   }
 ]
