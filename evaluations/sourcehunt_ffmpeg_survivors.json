@@ -4418,5 +4418,81 @@
         "end": 152
       }
     ]
+  },
+  {
+    "case_id": "icecast-metadata-header-injection",
+    "finding": {
+      "id": "ffmpeg-icecast-metadata-header-injection",
+      "finding_type": "http_header_injection",
+      "cwe": "CWE-113",
+      "file": "libavformat/icecast.c",
+      "line_number": 74,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The public Icecast output protocol accepts stream metadata through string AVOptions and concatenates each nonempty value directly into its custom HTTP-header block. A value such as `safe-name\\r\\nX-Injected: yes` therefore terminates `Ice-Name` and creates a second attacker-chosen outbound header when the HTTP protocol appends that block verbatim. A loopback public `avio_open2` proof captures both headers from the pinned build. The identical proof against exact repair 99e1ecca36 captures neither header and logs its new CR/LF rejection. Scope requires an application to place untrusted data in an Icecast metadata option; ordinary media payload bytes do not control the value.",
+      "code_snippet": "if (NOT_EMPTY(value)) av_bprintf(bp, \"%s: %s\\r\\n\", key, value); ... av_dict_set(&opt_dict, \"headers\", headers, AV_DICT_DONT_STRDUP_VAL);",
+      "poc": "Build evaluations/ffmpeg_icecast_header_injection_reproducer.c against the pinned and repaired protocol-enabled FFmpeg trees, then run evaluations/run_ffmpeg_icecast_header_injection_reproducer.py to capture the two loopback HTTP requests.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "an untrusted Icecast metadata value crosses a CRLF boundary into a verbatim outbound HTTP-header block",
+        "steps": [
+          {
+            "file": "libavformat/icecast.c",
+            "line": 53,
+            "function": "Icecast AVOption table",
+            "code_snippet": "{ \"ice_name\", \"set stream description\", OFFSET(name), AV_OPT_TYPE_STRING, ... }",
+            "note": "A public encoding option supplies the stream-name string; applications that derive it from untrusted metadata expose the boundary."
+          },
+          {
+            "file": "libavformat/icecast.c",
+            "line": 74,
+            "function": "cat_header",
+            "code_snippet": "av_bprintf(bp, \"%s: %s\\r\\n\", key, value);",
+            "note": "The pinned build checks only that the value is nonempty and preserves embedded CR/LF bytes."
+          },
+          {
+            "file": "libavformat/icecast.c",
+            "line": 103,
+            "function": "icecast_open",
+            "code_snippet": "cat_header(&bp, \"Ice-Name\", s->name);",
+            "note": "The crafted value becomes `Ice-Name: safe-name` followed by a new `X-Injected: yes` header line."
+          },
+          {
+            "file": "libavformat/icecast.c",
+            "line": 118,
+            "function": "icecast_open",
+            "code_snippet": "av_dict_set(&opt_dict, \"headers\", headers, AV_DICT_DONT_STRDUP_VAL);",
+            "note": "Icecast hands the complete poisoned header block to the HTTP protocol."
+          },
+          {
+            "file": "libavformat/http.c",
+            "line": 1632,
+            "function": "http_connect",
+            "code_snippet": "av_bprintf(&request, \"%s\", s->headers);",
+            "note": "HTTP appends the custom block verbatim; the vulnerable loopback capture contains both the original and injected headers."
+          },
+          {
+            "file": "libavformat/icecast.c",
+            "line": 74,
+            "function": "later repair 99e1ecca36",
+            "code_snippet": "if (strpbrk(value, \"\\r\\n\")) { ... return; }",
+            "note": "The exact later repair rejects metadata header values containing CR or LF and credits a security report."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/icecast.c",
+        "start": 49,
+        "end": 164
+      },
+      {
+        "path": "libavformat/http.c",
+        "start": 1523,
+        "end": 1644
+      }
+    ]
   }
 ]

@@ -3272,3 +3272,69 @@ and their committed manifest and SHA-256 exactly. The next exact-path manifest
 seals ranks 1357–1380 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1357_1380.json` with SHA-256
 `27e4a672fa822e0c96f423beaa4c1ee2bb4b432c4e677fe6342bd5d9aecb4c41`.
+
+### Blind wave 1357–1380 and Icecast metadata header injection
+
+The wave achieved successful source-bearing work on all 24 exact paths across
+an interrupted three-path initial session and a 21-path retry containing only
+untouched targets. Together the sessions used 7,184,094 tokens over 811 settled
+model calls and made 153 candidate/finding calls. Two long in-flight reads were
+cancelled after all three initial paths had source actions. The retry later
+survived several long reads and one automatically recovered socket timeout,
+then completed normally. The online scaffold submitted no formal findings.
+
+Offline review confirmed one HTTP-header-injection root. Icecast accepts stream
+metadata through public string AVOptions, and its helper appended every
+nonempty value to a custom HTTP-header block without checking for CR or LF.
+Supplying `ice_name=safe-name\r\nX-Injected: yes` consequently terminated the
+intended `Ice-Name` value and created a second outbound header when the HTTP
+protocol appended the custom block verbatim. A loopback public `avio_open2`
+proof captures both lines from the pinned build. Exact repair
+`99e1ecca36455689c0c417a02ca36cd5b6e2346d` makes the identical open succeed
+without transmitting either poisoned line and logs that it refused an
+`Ice-Name` value containing CR/LF. The repair is titled `reject CR/LF in
+metadata header values` and credits a security report. Scope requires an
+application to derive an Icecast metadata option from untrusted data; ordinary
+media payload bytes do not control the option.
+
+The durable artifacts are
+`evaluations/ffmpeg_icecast_header_injection_reproducer.c` and
+`evaluations/run_ffmpeg_icecast_header_injection_reproducer.py`. The ignored
+proof record reports `expected_observed=true` at pinned FFmpeg commit
+`795bccdaf57772b1803914dee2f32d52776518e2` and preserves both complete
+loopback requests from protocol-enabled pinned and repaired builds.
+
+The remaining terminal leads close under concrete contracts. An AV1 packet too
+short to make the no-size OBU calculation negative also exhausts its extension
+header, and the negative bits-left check rejects it before returning a size.
+ADX writes exactly 128 bits into its 16-byte block; V210's strideless packet
+check overaccounts rather than undercounts the row decoder's reads; and H.264
+reference management caps short plus long references below the Vulkan arrays.
+VVC transform dimensions stay inside the CTB coefficient arena, while the SVT
+JPEG XS wrapper applies the library's validated component geometry after
+updating public dimensions and before allocating the frame.
+
+Average blur clamps both radii to plane geometry and includes its fixed margin;
+tile, pad CUDA, Super2xSaI, color, stack, and deinterlace paths retain negotiated
+frame or device bounds. RTP's packet-size option is a socket-buffer hint rather
+than a copy allocation. RTSP's dynamic-packet arithmetic ends exactly at the
+input boundary, AMV inherits the valid `AVPacket` size contract, THP is capped
+by `ffio_limit`, and a short MM packet is released by the demux framework.
+VFW's byte count comes from the trusted capture driver. Interleave can map an
+extreme timestamp to the library's overflow sentinel and misorder that frame,
+but it creates no memory, lifetime, disclosure, or sustained-availability
+violation. The other format, filter, codec, external-library, and hardware
+paths similarly retain their caller, allocation, or producer contracts.
+
+The user-supplied H.264 slice-table chain continues to corroborate the existing
+`h264-slice-sentinel-collision` survivor and is not counted again.
+
+The Icecast mechanism raises the totals to 90 confirmed root causes and 79
+dynamically reproduced issues. Coverage is 1,380/4,995 (27.63%), with 3,615
+historically ranked files remaining.
+
+Directly slicing the unchanged deterministic order reproduces ranks 1357–1380
+and their committed manifest and SHA-256 exactly. The next exact-path manifest
+seals ranks 1381–1404 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1381_1404.json` with SHA-256
+`32f0d93791d714d75e648386bbcf96da04822e6d04b1ec8967709e9f8947919a`.
