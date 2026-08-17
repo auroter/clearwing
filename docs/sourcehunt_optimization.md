@@ -3677,3 +3677,71 @@ ranks 1453–1476 and their committed manifest exactly. The next exact-path
 manifest seals ranks 1477–1500 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1477_1500.json` with SHA-256
 `2ab8cef2dc00ae7f5bef73ab84118f80b7fca7b730f6b0d904ec952a0c4f469f`.
+
+### Blind wave 1477–1500 and three malformed-IMF roots
+
+The wave completed source-bearing work on all 24 exact paths in one natural
+session. It settled 853 model calls using 7,662,578 input tokens and 196,451
+output tokens, 7,859,029 total, and made 207 candidate/finding calls. The
+online scaffold retained no formal finding. Its sole `record_finding` call
+proposed that an MTV segment shorter than the declared raw frame lets the raw
+decoder over-read; offline review closed it because packet-backed RGB565 takes
+the no-copy path and `raw_decode()` rejects `buf_size < frame_size` before
+publishing image planes.
+
+Offline repair-oracle review recovered two independent IMF null dereferences.
+An AssetMap Chunk without `Path` makes `xmlNodeGetContent()` return NULL, which
+`imf_uri_is_url()` immediately passes to `strstr()`. Exact repair `0fe4bd4b43`
+validates the Path node and content first. Separately, a MainImageSequence
+without a ResourceList creates and publishes a playback track with zero
+resources. Stream initialization then unconditionally opens resource zero and
+dereferences the NULL resource pointer. Exact repair `a76190152d` rejects the
+empty virtual track before publication.
+
+The same AssetMap loop contains a third, unrepaired progress failure. A child
+whose name is not `Asset` executes `continue` before the loop's only
+`xmlNextElementSibling()` assignment, so the same node is retried forever. A
+minimal `AssetList` containing `Annotation` pins production ffprobe beyond a
+two-second deadline.
+
+`evaluations/run_ffmpeg_imf_crash_reproducer.py` is the durable proof for all
+three roots. It runs ASan-enabled IMF/libxml builds at the pinned commit and at
+the two exact upstream repairs. The ignored report records zero-page aborts for
+both malformed crash packages, clean invalid-data rejection at the repaired
+revision, and the independent bounded-time non-Asset hang; it reports
+`expected_observed=true`.
+
+The remaining candidates close under concrete bounds and contracts. CBS H.264
+checks both every array-length field and each declared NAL size. WBMP dimensions
+cannot reach bit 31 after generic image validation; BMP's same validation keeps
+row-size products representable. RTV1 allocates its aligned block geometry,
+CLJR receives ceil-divided chroma storage and a padded safe bit reader, and
+VBLE-like odd-plane underallocation is absent. MIPS chroma helpers receive fixed
+H.264 block heights, SpeedHQ run and coefficient indices fit their 65-entry and
+12-bit domains, and SCPR's row-padding arithmetic maps the apparent negative
+index to the prior row's last visible pixel.
+
+ASDR and decorrelate share negotiated layouts. VAAPI reference topology,
+D3D12 frame/context geometry, DirectShow sample lengths, and RKMpp descriptor
+ownership are framework contracts; RKMpp intentionally exposes only the public
+descriptor portion of its combined private allocation. RV40 uses codec-owned
+padded frames, PP BNK's music branch is exactly two equal-sized tracks, and the
+swscale op backend explicitly declares the padding its vector kernels require.
+SetPTS NaN/Inf conversion remains configuration-only integer-cast UB without a
+demonstrated out-of-range access, matching the earlier campaign exclusion.
+
+The user-supplied H.264 slice-table chain remains strong independent
+corroboration of `h264-slice-sentinel-collision`: the `0xFFFF` poison, picture
+re-poisoning of the spare stride column, deblocking-only equality,
+`top_borders[-1]`, and 96-byte underflow all align with the recorded mechanism.
+It is not counted again.
+
+The three new roots raise the totals to 101 confirmed root causes and 87
+dynamically reproduced issues. Coverage is 1,500/4,995 (30.03%), with 3,495
+historically ranked files remaining.
+
+Directly slicing the unchanged 4,995-file deterministic order reproduces ranks
+1477–1500 and their committed manifest exactly. The next exact-path manifest
+seals ranks 1501–1524 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1501_1524.json` with SHA-256
+`10c36e53b2d38a99999a2bb951a81f0c2bfce634d958acc6b0fe559d83887d04`.

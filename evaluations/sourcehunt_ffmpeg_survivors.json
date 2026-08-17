@@ -5110,5 +5110,224 @@
         "end": 170
       }
     ]
+  },
+  {
+    "case_id": "imf-assetmap-missing-path-null-dereference",
+    "finding": {
+      "id": "ffmpeg-imf-assetmap-missing-path-null-dereference",
+      "finding_type": "denial_of_service",
+      "cwe": "CWE-476",
+      "file": "libavformat/imfdec.c",
+      "line_number": 258,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "The IMF demuxer looks up a Chunk Path in attacker-controlled AssetMap XML and passes the result directly to xmlNodeGetContent without checking whether the element exists. A missing Path yields NULL, which is immediately passed to imf_uri_is_url and then strstr, causing a zero-page read and process abort. The ASan-enabled production ffprobe proof aborts in platform strstr on the minimal package, while exact repair 0fe4bd4b43 rejects the identical XML with 'missing Path element in Chunk'.",
+      "code_snippet": "uri = xmlNodeGetContent(ff_imf_xml_get_child_element_by_name(node, \"Path\")); if (!imf_uri_is_url(uri) ...)",
+      "poc": "Configure pinned and repaired FFmpeg trees with libxml2 and the IMF demuxer, then run evaluations/run_ffmpeg_imf_crash_reproducer.py. The ignored proof report records the pinned ASan abort and exact repaired rejection.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a missing AssetMap Path becomes a NULL URI and reaches strstr without validation",
+        "steps": [
+          {
+            "file": "libavformat/imfdec.c",
+            "line": 680,
+            "function": "imf_read_header",
+            "code_snippet": "if ((ret = parse_assetmap(s, asset_map_path))) return ret;",
+            "note": "Opening an IMF composition automatically parses attacker-supplied ASSETMAP.xml from the package directory."
+          },
+          {
+            "file": "libavformat/imfdec.c",
+            "line": 258,
+            "function": "parse_imf_asset_map_from_xml_dom",
+            "code_snippet": "xmlNodeGetContent(ff_imf_xml_get_child_element_by_name(node, \"Path\"))",
+            "note": "The Path lookup may return NULL, and its result is consumed without an existence check."
+          },
+          {
+            "file": "libavformat/imfdec.c",
+            "line": 259,
+            "function": "parse_imf_asset_map_from_xml_dom",
+            "code_snippet": "if (!imf_uri_is_url(uri) && ...)",
+            "note": "The NULL URI is immediately passed to the path classifiers."
+          },
+          {
+            "file": "libavformat/imfdec.c",
+            "line": 132,
+            "function": "imf_uri_is_url",
+            "code_snippet": "return strstr(string, \"://\") != NULL;",
+            "note": "ASan records the zero-page read in strstr and aborts the production ffprobe process."
+          },
+          {
+            "file": "libavformat/imfdec.c",
+            "line": 259,
+            "function": "later repair 0fe4bd4b43",
+            "code_snippet": "if (!path_node) { ... ret = AVERROR_INVALIDDATA; break; }",
+            "note": "The exact upstream repair validates both a missing element and empty content before classifying the URI."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/imfdec.c",
+        "start": 130,
+        "end": 273
+      },
+      {
+        "path": "libavformat/imfdec.c",
+        "start": 625,
+        "end": 693
+      }
+    ]
+  },
+  {
+    "case_id": "imf-zero-resource-virtual-track-null-dereference",
+    "finding": {
+      "id": "ffmpeg-imf-zero-resource-virtual-track-null-dereference",
+      "finding_type": "denial_of_service",
+      "cwe": "CWE-476",
+      "file": "libavformat/imfdec.c",
+      "line_number": 371,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "An IMF MainImageSequence without a ResourceList creates a virtual track whose resource_count is zero and resources pointer is NULL. open_virtual_track accepts and publishes that empty track because its resource loop performs zero iterations. set_context_streams_from_tracks then unconditionally opens resource index zero; open_track_resource_context forms a pointer from NULL and dereferences it. The ASan-enabled production ffprobe proof aborts on a near-zero read, while exact repair a76190152d rejects the identical track before publication.",
+      "code_snippet": "for (uint32_t i = 0; i < virtual_track->resource_count; i++) { ... } ... open_track_resource_context(s, c->tracks[i], 0);",
+      "poc": "Configure pinned and repaired FFmpeg trees with libxml2 and the IMF demuxer, then run evaluations/run_ffmpeg_imf_crash_reproducer.py. The ignored proof report records the pinned ASan abort and exact repaired rejection.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a resource-less IMF sequence publishes an empty track whose unconditional index-zero open dereferences NULL",
+        "steps": [
+          {
+            "file": "libavformat/imf_cpl.c",
+            "line": 655,
+            "function": "push_main_image_2d_sequence",
+            "code_snippet": "resource_list_elem = ff_imf_xml_get_child_element_by_name(image_sequence_elem, \"ResourceList\"); if (!resource_list_elem) return 0;",
+            "note": "A missing ResourceList is accepted after the zero-initialized virtual track has been created."
+          },
+          {
+            "file": "libavformat/imfdec.c",
+            "line": 528,
+            "function": "open_virtual_track",
+            "code_snippet": "for (uint32_t i = 0; i < virtual_track->resource_count; i++) {",
+            "note": "The zero-resource track skips all resource construction without returning an error."
+          },
+          {
+            "file": "libavformat/imfdec.c",
+            "line": 555,
+            "function": "open_virtual_track",
+            "code_snippet": "c->tracks[c->track_count++] = track;",
+            "note": "The empty playback track, with resources still NULL, is published to the demuxer context."
+          },
+          {
+            "file": "libavformat/imfdec.c",
+            "line": 575,
+            "function": "set_context_streams_from_tracks",
+            "code_snippet": "ret = open_track_resource_context(s, c->tracks[i], 0);",
+            "note": "Stream initialization assumes every published track has resource index zero."
+          },
+          {
+            "file": "libavformat/imfdec.c",
+            "line": 371,
+            "function": "open_track_resource_context",
+            "code_snippet": "if (track_resource->ctx) {",
+            "note": "track_resource was formed from NULL resources plus index zero, so this member read aborts near the zero page."
+          },
+          {
+            "file": "libavformat/imfdec.c",
+            "line": 541,
+            "function": "later repair a76190152d",
+            "code_snippet": "if (!virtual_track->resource_count) { ... ret = AVERROR_INVALIDDATA; goto clean_up; }",
+            "note": "The exact upstream repair rejects the empty track before it can enter c->tracks."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/imf_cpl.c",
+        "start": 620,
+        "end": 680
+      },
+      {
+        "path": "libavformat/imfdec.c",
+        "start": 360,
+        "end": 442
+      },
+      {
+        "path": "libavformat/imfdec.c",
+        "start": 513,
+        "end": 622
+      }
+    ]
+  },
+  {
+    "case_id": "imf-assetmap-nonasset-child-infinite-loop",
+    "finding": {
+      "id": "ffmpeg-imf-assetmap-nonasset-child-infinite-loop",
+      "finding_type": "infinite_loop",
+      "cwe": "CWE-835",
+      "file": "libavformat/imfdec.c",
+      "line_number": 232,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "The IMF AssetList parser advances asset_element only at the bottom of the successful Asset branch. If the current XML element is not named Asset, the loop executes continue before that update and retries the same node forever. A minimal AssetList containing Annotation makes the ASan-enabled production ffprobe remain in the parser beyond the proof's two-second deadline. The bug is independent of the two later IMF crash repairs and remains present at those repaired sources.",
+      "code_snippet": "while (asset_element) { if (av_strcasecmp(asset_element->name, \"Asset\") != 0) continue; ... asset_element = xmlNextElementSibling(asset_element); }",
+      "poc": "Run evaluations/run_ffmpeg_imf_crash_reproducer.py against the configured pinned and repaired trees. Its non_asset_child_hang case launches production ffprobe under a two-second deadline and records that parsing reached the AssetMap before timing out without a sanitizer failure.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a non-Asset XML child takes continue before the loop's only sibling advance and pins IMF header parsing",
+        "steps": [
+          {
+            "file": "libavformat/imfdec.c",
+            "line": 680,
+            "function": "imf_read_header",
+            "code_snippet": "if ((ret = parse_assetmap(s, asset_map_path))) return ret;",
+            "note": "The public IMF open path synchronously parses the package's attacker-controlled AssetMap."
+          },
+          {
+            "file": "libavformat/imfdec.c",
+            "line": 229,
+            "function": "parse_imf_asset_map_from_xml_dom",
+            "code_snippet": "asset_element = xmlFirstElementChild(node); while (asset_element) {",
+            "note": "The first element child can have any XML name, including the proof's Annotation element."
+          },
+          {
+            "file": "libavformat/imfdec.c",
+            "line": 231,
+            "function": "parse_imf_asset_map_from_xml_dom",
+            "code_snippet": "if (av_strcasecmp(asset_element->name, \"Asset\") != 0) continue;",
+            "note": "A non-Asset child immediately restarts the loop with asset_element unchanged."
+          },
+          {
+            "file": "libavformat/imfdec.c",
+            "line": 270,
+            "function": "parse_imf_asset_map_from_xml_dom",
+            "code_snippet": "asset_element = xmlNextElementSibling(asset_element);",
+            "note": "The only progress operation is below the continued branch and is therefore unreachable for that child."
+          },
+          {
+            "file": "evaluations/run_ffmpeg_imf_crash_reproducer.py",
+            "line": 267,
+            "function": "main",
+            "code_snippet": "hang_run = _run_with_timeout(vulnerable_binary, hang_dir, 2.0)",
+            "note": "The production demuxer reaches AssetMap parsing and exceeds the bounded deadline without terminating or reporting a sanitizer fault."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/imfdec.c",
+        "start": 185,
+        "end": 273
+      },
+      {
+        "path": "libavformat/imfdec.c",
+        "start": 625,
+        "end": 693
+      }
+    ]
   }
 ]
