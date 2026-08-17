@@ -4494,5 +4494,100 @@
         "end": 1644
       }
     ]
+  },
+  {
+    "case_id": "dovi-rpu-no-metadata-oob-read",
+    "finding": {
+      "id": "ffmpeg-dovi-rpu-no-metadata-oob-read",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavcodec/bsf/dovi_rpu.c",
+      "line_number": 170,
+      "severity": "high",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The public AV1 dovi_rpu bitstream filter assumes every successfully parsed Dolby Vision RPU produces replacement metadata. The parser deliberately returns success for an unrecognized RPU type, after which ff_dovi_get_metadata reports no metadata and update_rpu returns a NULL pointer with size zero. The AV1 path wraps that result in an AVBufferRef, changes the payload pointer to address 1, and assigns -1 to its unsigned payload size. CBS serialization then reads from address 1 while iterating the effectively unbounded payload. A public 56-byte AV1 metadata OBU deterministically aborts under ASan in cbs_av1_write_obu on the pinned build; exact repair 534f16d866 adds the missing no-RPU guard, and the identical packet is emitted cleanly.",
+      "code_snippet": "ref = av_buffer_create(rpu, rpu_size, av_buffer_default_free, NULL, 0); ... t35->payload = rpu + 1; t35->payload_size = rpu_size - 1;",
+      "poc": "Configure FFmpeg with --enable-bsf=dovi_rpu, build evaluations/ffmpeg_dovi_rpu_no_metadata_reproducer.c against the pinned and repaired ASan trees, then run evaluations/run_ffmpeg_dovi_rpu_no_metadata_reproducer.py to record the address-one crash/clean-output differential.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a valid AV1 Dolby metadata unit whose RPU parser returns success without metadata becomes a NULL/zero replacement, then pointer and size underflow make CBS serialize from address one",
+        "steps": [
+          {
+            "file": "libavcodec/bsf/dovi_rpu.c",
+            "line": 139,
+            "function": "dovi_rpu_update_fragment_av1",
+            "code_snippet": "if (frag->units[i].type != AV1_OBU_METADATA || ... t35->payload_size < 6) continue;",
+            "note": "The crafted public packet is a size-delimited AV1 ITU-T T.35 metadata OBU with the US country code and a sufficient payload."
+          },
+          {
+            "file": "libavcodec/bsf/dovi_rpu.c",
+            "line": 145,
+            "function": "dovi_rpu_update_fragment_av1",
+            "code_snippet": "provider_code = AV_RB16(t35->payload); provider_oriented_code = AV_RB32(t35->payload + 2);",
+            "note": "Packet bytes select Dolby provider 0x003B and provider-oriented code 0x00000800, entering the RPU rewrite path."
+          },
+          {
+            "file": "libavcodec/dovi_rpudec.c",
+            "line": 417,
+            "function": "ff_dovi_rpu_parse",
+            "code_snippet": "if (rpu_type != 2) { ... return 0; }",
+            "note": "The inner EMDF payload supplies RPU type zero, for which parsing intentionally succeeds without populating metadata."
+          },
+          {
+            "file": "libavcodec/bsf/dovi_rpu.c",
+            "line": 60,
+            "function": "update_rpu",
+            "code_snippet": "if (ret == 0 /* no metadata */) { *out_rpu = NULL; *out_size = 0; return 0; }",
+            "note": "The no-metadata state is explicitly represented to the caller as a successful NULL pointer and zero size."
+          },
+          {
+            "file": "libavcodec/bsf/dovi_rpu.c",
+            "line": 162,
+            "function": "dovi_rpu_update_fragment_av1",
+            "code_snippet": "ref = av_buffer_create(rpu, rpu_size, av_buffer_default_free, NULL, 0);",
+            "note": "The vulnerable caller accepts the NULL/zero result and creates a zero-sized buffer reference around it."
+          },
+          {
+            "file": "libavcodec/bsf/dovi_rpu.c",
+            "line": 170,
+            "function": "dovi_rpu_update_fragment_av1",
+            "code_snippet": "t35->payload = rpu + 1; t35->payload_size = rpu_size - 1;",
+            "note": "NULL plus one becomes address 1, while zero minus one becomes SIZE_MAX in the size_t payload field."
+          },
+          {
+            "file": "libavcodec/cbs_av1_syntax_template.c",
+            "line": 2017,
+            "function": "cbs_av1_write_metadata_itut_t35",
+            "code_snippet": "for (i = 0; i < current->payload_size; i++) ... current->payload[i]",
+            "note": "The CBS writer immediately reads from address 1; ASan reports the SEGV through cbs_av1_write_obu."
+          },
+          {
+            "file": "libavcodec/bsf/dovi_rpu.c",
+            "line": 160,
+            "function": "later repair 534f16d866",
+            "code_snippet": "if (!rpu || rpu_size <= 1) { av_free(rpu); continue; }",
+            "note": "The exact later repair checks the missing postcondition before constructing the AV1 payload and identifies the issue as an out-of-array access."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/bsf/dovi_rpu.c",
+        "start": 45,
+        "end": 176
+      },
+      {
+        "path": "libavcodec/dovi_rpudec.c",
+        "start": 350,
+        "end": 425
+      },
+      {
+        "path": "libavcodec/cbs_av1_syntax_template.c",
+        "start": 1994,
+        "end": 2021
+      }
+    ]
   }
 ]

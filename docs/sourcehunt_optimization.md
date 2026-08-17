@@ -3338,3 +3338,76 @@ and their committed manifest and SHA-256 exactly. The next exact-path manifest
 seals ranks 1381–1404 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1381_1404.json` with SHA-256
 `32f0d93791d714d75e648386bbcf96da04822e6d04b1ec8967709e9f8947919a`.
+
+### Blind wave 1381–1404 and DOVI RPU no-metadata out-of-bounds read
+
+The wave completed source-bearing work on all 24 exact paths in one natural
+session. It settled 826 model calls using 7,116,542 input tokens and 166,716
+output tokens, 7,283,258 total, and made 163 candidate/finding calls. The
+online scaffold submitted no formal findings.
+
+Offline review confirmed one high-severity memory-safety root in the public
+AV1 `dovi_rpu` bitstream filter. An AV1 ITU-T T.35 metadata OBU with the Dolby
+provider identifiers can carry an RPU type that the parser deliberately
+ignores with a successful return. `ff_dovi_get_metadata()` then reports no
+metadata, and `update_rpu()` represents that state as `rpu = NULL` and
+`rpu_size = 0`. The vulnerable AV1 caller nevertheless wraps that result in an
+`AVBufferRef`, assigns `t35->payload = rpu + 1`, and assigns
+`t35->payload_size = rpu_size - 1`. CBS serialization consequently reads from
+address 1 with an effectively unbounded unsigned payload size.
+
+A public 56-byte packet sent through `av_bsf_get_by_name("dovi_rpu")`,
+`av_bsf_send_packet()`, and `av_bsf_receive_packet()` deterministically aborts
+the pinned ASan build in `cbs_av1_write_obu`. Exact later repair
+`534f16d866c732a85c34ac576d66d578669578f1`, titled `handle update_rpu()
+returning no RPU`, adds the missing `!rpu || rpu_size <= 1` AV1 guard and
+identifies the issue as an out-of-array access. The identical packet passes the
+same public filter path on that commit and is emitted intact with no sanitizer
+failure. The packet includes in-payload trailing storage so the differential
+reaches this exact post-parse invariant rather than the pinned reader's normal
+padded-input precondition.
+
+The durable artifacts are
+`evaluations/ffmpeg_dovi_rpu_no_metadata_reproducer.c` and
+`evaluations/run_ffmpeg_dovi_rpu_no_metadata_reproducer.py`. The ignored proof
+record reports `expected_observed=true` at pinned FFmpeg commit
+`795bccdaf57772b1803914dee2f32d52776518e2` and preserves the address-one ASan
+trace plus the clean repaired output.
+
+The remaining terminal leads close under concrete bounds and ownership
+contracts. VIMA allocates exactly the declared sample count and its safe bit
+reader contains an exhausted packet; VP9 reference indices are three-bit
+values indexing eight entries; and the AAC/VBN encoder paths operate on
+encoder-owned, validated dimensions. The format-internal declarations expose
+no direct sink, while `ff_alloc_extradata()` rejects negative and near-`INT_MAX`
+sizes. IDCIN and MMF ultimately use EOF-aware AVIO packet reads, and PMP resets
+`current_packet` exactly when its stream cycle reaches the computed
+`(num_streams - 1) * audio_packets + 1` boundary.
+
+ANLMS inherits one common channel-layout and sample-rate domain from default
+format negotiation, so both input frames match the output channel loop. QSV,
+CUDA, VAAPI, color, crop, lens, perspective, and color-constancy paths retain
+their negotiated frame, region, plane, or hardware-surface bounds;
+perspective's LUT stride is the logical eight-bit plane width from
+`av_image_fill_linesizes()`, not an allocated frame's padded stride. DNN queue
+entries retain caller-owned values and empty-pop handling at their consumers.
+The x86 vertical filter count is capped by `MAX_FILTER_SIZE`, and the LoongArch
+LASX vector paths add `YUVRGB_TABLE_HEADROOM` before their direct lookup macro,
+matching the scalar fallback. LittleCMS serializes an unchanged profile twice
+with a deterministic required size. The post-snapshot AMF error-path frame
+cleanup repairs a one-frame failure leak; it does not establish an
+attacker-repeatable sustained-exhaustion root. No other post-snapshot change on
+these paths provides a security repair oracle.
+
+The user-supplied H.264 slice-table chain remains strong independent
+corroboration of `h264-slice-sentinel-collision` and is not counted again.
+
+The DOVI mechanism raises the totals to 91 confirmed root causes and 80
+dynamically reproduced issues. Coverage is 1,404/4,995 (28.11%), with 3,591
+historically ranked files remaining.
+
+Directly slicing the unchanged deterministic order reproduces ranks 1381–1404
+and their committed manifest and SHA-256 exactly. The next exact-path manifest
+seals ranks 1405–1428 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1405_1428.json` with SHA-256
+`a0dda410fd3bd0799189981e386fd8fc740bc6fba0852c186c5017305aa4346d`.
