@@ -93,6 +93,18 @@ class RecordFindingInput(ToolInputModel):
     )
 
 
+def _normalize_compatibility_trace(trace: dict | list | None) -> dict:
+    if trace is None:
+        return {}
+    if isinstance(trace, dict):
+        return trace
+    if isinstance(trace, list):
+        # Some OpenAI-compatible local models flatten the compatibility
+        # wrapper and send the ordered steps directly.
+        return {"steps": trace}
+    raise TypeError("expected an object with `steps` or a list of trace steps")
+
+
 def build_reporting_tools(ctx: HunterContext) -> list:
     """Build the finding-reporter and trace-step tools for a hunter session."""
 
@@ -171,7 +183,7 @@ def build_reporting_tools(ctx: HunterContext) -> list:
         algorithm: str = "",
         crypto_attack_class: str = "",
         key_material_exposed: str = "",
-        trace: dict | None = None,
+        trace: dict | list | None = None,
         candidate_id: str = "",
         **_: object,
     ) -> str:
@@ -233,8 +245,9 @@ def build_reporting_tools(ctx: HunterContext) -> list:
                     "ERROR: a validated candidate requires static_corroboration or stronger "
                     "evidence_level; unresolved suspicion remains in the candidate ledger."
                 )
-        explicit_steps = trace.get("steps", []) if trace else []
         try:
+            trace_payload = _normalize_compatibility_trace(trace)
+            explicit_steps = trace_payload.get("steps", [])
             authoritative_steps = (
                 list(ctx.trace_steps)
                 if ctx.trace_steps
@@ -248,7 +261,7 @@ def build_reporting_tools(ctx: HunterContext) -> list:
                 )
             vuln_trace = VulnerabilityTrace(
                 steps=authoritative_steps,
-                summary=(trace or {}).get("summary", ""),
+                summary=trace_payload.get("summary", ""),
             )
         except Exception as exc:
             return (

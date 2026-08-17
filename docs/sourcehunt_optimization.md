@@ -3584,3 +3584,96 @@ and their committed manifest and SHA-256 exactly. The next exact-path manifest
 seals ranks 1453–1476 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1453_1476.json` with SHA-256
 `e6343e4a35fd0bd076fe22c36d6f3c17b60066095853647ae086f10094ea645c`.
+
+### Blind wave 1453–1476, four roots, and trace compatibility
+
+The wave completed source-bearing work on all 24 exact paths in one natural
+session. It settled 747 model calls using 6,175,782 input tokens and 200,070
+output tokens, 6,375,852 total, and made 190 candidate/finding calls. The
+online scaffold retained no formal finding. All five `record_finding` calls
+were attempts to report the same MJPEG-A logical over-read; the first preceded
+candidate validation, two exposed a flattened-trace compatibility crash, and
+two were repeat-suppressed. Offline review closed the candidate because every
+AVPacket carries at least 64 zeroed padding bytes, which contain its two-byte
+read.
+
+The compatibility failure was still useful optimizer evidence. The local
+model sent an otherwise valid ordered trace directly as a list instead of the
+documented object containing `steps`. `record_finding` called `.get()` before
+its validation block and lost the report to an `AttributeError`.
+`clearwing/agent/tools/hunt/reporting.py` now normalizes this common flattened
+form before constructing the authoritative trace, with a regression test in
+`tests/test_sourcehunt_hunter.py`. The schema remains strict for conforming
+providers; the runtime fallback prevents local-model evidence loss.
+
+Offline repair-oracle review confirmed a one-byte S/PDIF AAC probe over-read.
+The vulnerable bound requires seven ADTS bytes relative to the four-byte sync,
+but `spdif_get_offset_and_codec()` starts the parser at `buf[5]`. A logical
+14-byte buffer containing the sync, burst header, and six ADTS bytes therefore
+admits a seventh byte from outside the declared range. This is production
+reachable through WAV/W64 automatic S/PDIF detection, whose short-read buffer
+reserves but does not initialize padding. Exact repair `15bbf3a21d` adds the
+missing byte and identifies the OSS-Fuzz result as a read of uninitialized
+memory.
+
+The durable S/PDIF artifacts are
+`evaluations/ffmpeg_spdif_aac_probe_boundary_reproducer.c` and
+`evaluations/run_ffmpeg_spdif_aac_probe_boundary_reproducer.py`. The runner
+links the pinned static libraries twice, once with the pinned probe source and
+once with the exact repaired source. With a 14-byte logical buffer inside a
+15-byte allocation whose `fc` tail completes the ADTS header, both runs report
+`adts=0 samples=1024 frames=1 score=12`; only the vulnerable probe consumes the
+logical tail and sets `codec=86018`, while the repair leaves `codec=0`. Its
+ignored proof record reports `expected_observed=true`.
+
+Two exact post-snapshot repairs establish platform-specific write overflows.
+D3D12 MPEG-2 allocates an upload resource from decoded frame geometry, sums
+attacker-controlled compressed slice sizes independently, and copies the full
+compressed picture to that resource without comparing the sizes. Exact repair
+`26a9f9b3ae` adds `ctx_pic->bitstream_size > ctx->bitstream_size` immediately
+before the mapping and copy. SCTP with `max_streams` accepts a zero- or one-byte
+read, passes `buf + 2` and `size - 2` to `recvmsg`, and then stores a two-byte
+stream ID into the undersized caller buffer. Public direct AVIO preserves the
+small request. Exact repair `5c3602abaa` adds the same `size < 2` guard already
+present in the write path. Both roots remain source-confirmed because this
+macOS host has neither D3D12 decode nor the SCTP kernel/API support required
+for faithful runtime proofs.
+
+The PowerPC AltiVec general vertical YUV-to-packed-RGB path contains a fourth
+root. Its dispatch installs six packed RGB routines without requiring a
+multiple-of-16 destination width. `yuv2packedX_altivec()` loops while
+`i < dstW` but emits a complete sixteen-pixel block on every iteration: 48
+bytes for RGB24/BGR24 or 64 bytes for the 32-bit layouts. The final partial
+iteration therefore overruns an exact-size public `sws_scale` destination.
+The apparent scratch tail is dead because the loop exits with `i >= dstW` and
+tests `if (i < dstW)`. This remains source-confirmed pending a PowerPC/AltiVec
+runtime proof.
+
+The remaining online candidates close under concrete contracts. LSCR's
+bytestream seek clamps to the packet, ULTI's masked codebook index matches its
+16 KiB table, and ADTS/MJPEG reads stay inside mandatory packet padding.
+Aliaspix dimensions remain identical across validation, allocation, and run
+bounds; MSMPEG4's macroblock walk and neighbor padding contain its predictors.
+Gradfun's 16-element prefix contains every negative `dc` index and its ring
+rows fit the `(radius + 1)` allocation. LZW grows its bit width with the table,
+while PAM and R210 allocation/write geometry agree with validated frame
+contracts. The framepool repair follows a temporary post-snapshot stack
+refactor and does not repair the pinned heap-owned implementation. Normalize,
+Haas, hardware upload, FRM, LRC, uncoded-frame, and the remaining utility paths
+retain negotiated bounds or affect correctness rather than memory safety.
+
+The user-supplied H.264 slice-table chain remains strong independent
+corroboration of `h264-slice-sentinel-collision`: the `0xFFFF` poison, picture
+re-poisoning of the spare stride column, deblocking-only equality,
+`top_borders[-1]`, and 96-byte underflow all align with the recorded mechanism.
+It is not counted again.
+
+The four new roots raise the totals to 98 confirmed root causes and 84
+dynamically reproduced issues. Coverage is 1,476/4,995 (29.55%), with 3,519
+historically ranked files remaining.
+
+Directly slicing the unchanged 4,995-file deterministic order reproduces
+ranks 1453–1476 and their committed manifest exactly. The next exact-path
+manifest seals ranks 1477–1500 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1477_1500.json` with SHA-256
+`2ab8cef2dc00ae7f5bef73ab84118f80b7fca7b730f6b0d904ec952a0c4f469f`.

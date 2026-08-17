@@ -4805,5 +4805,310 @@
         "end": 201
       }
     ]
+  },
+  {
+    "case_id": "spdif-aac-probe-one-byte-overread",
+    "finding": {
+      "id": "ffmpeg-spdif-aac-probe-one-byte-overread",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavformat/spdifdec.c",
+      "line_number": 153,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "The S/PDIF probe checks for a seven-byte AAC ADTS header as though parsing started at the four-byte sync boundary, but spdif_get_offset_and_codec actually receives &buf[5]. A buffer ending after six logical ADTS bytes therefore passes the precondition and av_adts_header_parse consumes a seventh byte outside the declared buffer. This is reachable from WAV/W64 auto-detection, whose short-read buffer reserves padding but does not initialize it before ff_spdif_probe. The durable production-source proof passes a 14-byte logical buffer in a 15-byte allocation whose tail byte completes an ADTS header: the pinned probe sets codec=AAC, while exact repair 15bbf3a21d adds the missing byte to the bound and leaves the codec unset. The repair explicitly identifies an OSS-Fuzz read of uninitialized memory.",
+      "code_snippet": "if (buf + 4 + AV_AAC_ADTS_HEADER_SIZE > p_buf + buf_size) break; ... spdif_get_offset_and_codec(..., &buf[5], ...);",
+      "poc": "Build evaluations/ffmpeg_spdif_aac_probe_boundary_reproducer.c against the pinned static libraries and run evaluations/run_ffmpeg_spdif_aac_probe_boundary_reproducer.py with the exact repaired spdifdec.c source to record the codec=AAC versus codec=NONE boundary differential.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a one-byte-short S/PDIF AAC precondition lets the ADTS parser consume uninitialized storage beyond the logical probe buffer",
+        "steps": [
+          {
+            "file": "libavformat/wavdec.c",
+            "line": 98,
+            "function": "set_spdif",
+            "code_snippet": "uint8_t *buf = av_malloc(len + AV_INPUT_BUFFER_PADDING_SIZE);",
+            "note": "WAV/W64 codec auto-detection allocates padding but does not initialize bytes beyond a short read."
+          },
+          {
+            "file": "libavformat/wavdec.c",
+            "line": 105,
+            "function": "set_spdif",
+            "code_snippet": "ret = ff_spdif_probe(buf, len, &codec);",
+            "note": "Only the number of bytes actually read is declared to the S/PDIF probe."
+          },
+          {
+            "file": "libavformat/spdifdec.c",
+            "line": 145,
+            "function": "ff_spdif_probe",
+            "code_snippet": "if (buf + 4 + AV_AAC_ADTS_HEADER_SIZE > p_buf + buf_size) break;",
+            "note": "At the crafted sync position, this accepts exactly six logically available AAC header bytes because it is one byte short."
+          },
+          {
+            "file": "libavformat/spdifdec.c",
+            "line": 152,
+            "function": "ff_spdif_probe",
+            "code_snippet": "spdif_get_offset_and_codec(NULL, (buf[2] << 8) | buf[1], &buf[5], &offset, codec)",
+            "note": "The AAC parser starts at byte five and requires seven bytes, consuming the byte immediately beyond the declared buffer."
+          },
+          {
+            "file": "libavformat/spdifdec.c",
+            "line": 145,
+            "function": "later repair 15bbf3a21d",
+            "code_snippet": "if (buf + 5 + AV_AAC_ADTS_HEADER_SIZE > p_buf + buf_size) break;",
+            "note": "The exact repair adds the missing byte and is explicitly tied to an OSS-Fuzz uninitialized-memory read."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/spdifdec.c",
+        "start": 115,
+        "end": 170
+      },
+      {
+        "path": "libavformat/wavdec.c",
+        "start": 88,
+        "end": 118
+      }
+    ]
+  },
+  {
+    "case_id": "d3d12va-mpeg2-bitstream-buffer-overflow",
+    "finding": {
+      "id": "ffmpeg-d3d12va-mpeg2-bitstream-buffer-overflow",
+      "finding_type": "out_of_bounds_write",
+      "cwe": "CWE-787",
+      "file": "libavcodec/d3d12va_mpeg2.c",
+      "line_number": 122,
+      "severity": "high",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "The D3D12 MPEG-2 accelerator allocates each upload resource at a fixed size derived from the decoded software-frame geometry, independently accumulates the compressed sizes of as many as 1,024 attacker-controlled slices, and copies that complete compressed bitstream into the mapped upload resource without comparing the two sizes. A sufficiently large validly framed MPEG-2 picture therefore writes past the GPU upload buffer from the CPU. Exact repair 26a9f9b3ae adds the missing ctx_pic->bitstream_size > ctx->bitstream_size guard immediately before mapping and copying. This remains source-confirmed because the current host has neither Windows nor a D3D12 decode device.",
+      "code_snippet": "ctx_pic->bitstream_size += size; ... memcpy(mapped_data, ctx_pic->bitstream, ctx_pic->bitstream_size);",
+      "poc": "On Windows with D3D12 MPEG-2 decode enabled, submit a picture whose accumulated slice payload exceeds ff_d3d12va_get_suitable_max_bitstream_size(); compare the pinned memcpy with exact repair 26a9f9b3ae, which rejects the frame before mapping the upload resource.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "attacker-controlled MPEG-2 slice bytes can exceed the fixed D3D12 upload resource and are copied past its mapped boundary",
+        "steps": [
+          {
+            "file": "libavcodec/d3d12va_decode.c",
+            "line": 141,
+            "function": "ff_d3d12va_get_suitable_max_bitstream_size",
+            "code_snippet": "return av_image_get_buffer_size(frames_ctx->sw_format, avctx->coded_width, avctx->coded_height, 1);",
+            "note": "The upload capacity is derived from decoded frame geometry rather than the compressed packet length."
+          },
+          {
+            "file": "libavcodec/d3d12va_decode.c",
+            "line": 192,
+            "function": "d3d12va_get_valid_helper_objects",
+            "code_snippet": ".Width = ctx->bitstream_size,",
+            "note": "Every D3D12 upload resource is created at that fixed byte capacity."
+          },
+          {
+            "file": "libavcodec/d3d12va_mpeg2.c",
+            "line": 83,
+            "function": "d3d12va_mpeg2_decode_slice",
+            "code_snippet": "ctx_pic->bitstream_size += size;",
+            "note": "Up to 1,024 externally supplied slice sizes are accumulated without a capacity comparison."
+          },
+          {
+            "file": "libavcodec/d3d12va_mpeg2.c",
+            "line": 122,
+            "function": "update_input_arguments",
+            "code_snippet": "memcpy(mapped_data, ctx_pic->bitstream, ctx_pic->bitstream_size);",
+            "note": "The complete compressed frame is copied to the smaller mapped resource, producing a CPU-side out-of-bounds write."
+          },
+          {
+            "file": "libavcodec/d3d12va_mpeg2.c",
+            "line": 106,
+            "function": "later repair 26a9f9b3ae",
+            "code_snippet": "if (ctx_pic->bitstream_size > ctx->bitstream_size) return AVERROR(EINVAL);",
+            "note": "The exact later repair adds the absent size relation before the map and memcpy."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/d3d12va_mpeg2.c",
+        "start": 35,
+        "end": 151
+      },
+      {
+        "path": "libavcodec/d3d12va_decode.c",
+        "start": 138,
+        "end": 205
+      },
+      {
+        "path": "libavcodec/d3d12va_decode.c",
+        "start": 415,
+        "end": 430
+      }
+    ]
+  },
+  {
+    "case_id": "sctp-max-streams-small-read-overflow",
+    "finding": {
+      "id": "ffmpeg-sctp-max-streams-small-read-overflow",
+      "finding_type": "out_of_bounds_write",
+      "cwe": "CWE-787",
+      "file": "libavformat/sctp.c",
+      "line_number": 314,
+      "severity": "high",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "When the public SCTP protocol is opened with max_streams, sctp_read reserves the first two output bytes for a stream ID but accepts read sizes zero or one. It passes buf+2 and size-2 to ff_sctp_recvmsg, so a one-byte read supplies a pointer beyond the caller's allocation and converts -1 to SIZE_MAX for recvmsg. Any received payload is written out of bounds; the following AV_WB16 also writes two stream-ID bytes into the one-byte caller buffer. Public direct AVIO reads can preserve such a caller-selected small size. Exact repair 5c3602abaa adds the size < 2 rejection already present in sctp_write. This remains source-confirmed because this macOS host lacks the SCTP kernel/API support needed for a faithful network reproduction.",
+      "code_snippet": "ret = ff_sctp_recvmsg(s->fd, buf + 2, size - 2, NULL, 0, &info, 0); AV_WB16(buf, info.sinfo_stream);",
+      "poc": "On an SCTP-capable host, open an sctp:// input with max_streams and AVIO_FLAG_DIRECT, issue a one-byte read while a peer sends data, and compare the pinned out-of-range iovec/stream-ID writes with exact repair 5c3602abaa.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "an opt-in one-byte SCTP read underflows its receive length and writes both payload and stream metadata beyond the caller buffer",
+        "steps": [
+          {
+            "file": "libavformat/aviobuf.c",
+            "line": 623,
+            "function": "avio_read",
+            "code_snippet": "if ((s->direct || size > s->buffer_size) && ... ) len = read_packet_wrapper(s, buf, size);",
+            "note": "The public direct-I/O path forwards the caller's requested read size without expanding it to the internal buffer size."
+          },
+          {
+            "file": "libavformat/avio.c",
+            "line": 517,
+            "function": "retry_transfer_wrapper",
+            "code_snippet": "ret = read ? h->prot->url_read(h, buf + len, size - len) : ...;",
+            "note": "A one-byte request reaches the selected protocol's read callback unchanged."
+          },
+          {
+            "file": "libavformat/sctp.c",
+            "line": 311,
+            "function": "sctp_read",
+            "code_snippet": "if (s->max_streams) {",
+            "note": "The public max_streams option selects the branch that prepends the two-byte stream ID."
+          },
+          {
+            "file": "libavformat/sctp.c",
+            "line": 314,
+            "function": "sctp_read",
+            "code_snippet": "ff_sctp_recvmsg(s->fd, buf + 2, size - 2, ...);",
+            "note": "For size one the destination is already beyond the caller buffer and the negative int length becomes a huge size_t iovec length."
+          },
+          {
+            "file": "libavformat/sctp.c",
+            "line": 315,
+            "function": "sctp_read",
+            "code_snippet": "AV_WB16(buf, info.sinfo_stream);",
+            "note": "After a successful receive, writing the two-byte stream ID independently overruns the same one-byte buffer."
+          },
+          {
+            "file": "libavformat/sctp.c",
+            "line": 312,
+            "function": "later repair 5c3602abaa",
+            "code_snippet": "if (size < 2) return AVERROR(EINVAL);",
+            "note": "The exact repair adds the missing minimum-size guard and explicitly documents the buf+2 and size-2 overflow mechanism."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/sctp.c",
+        "start": 290,
+        "end": 350
+      },
+      {
+        "path": "libavformat/avio.c",
+        "start": 500,
+        "end": 560
+      },
+      {
+        "path": "libavformat/aviobuf.c",
+        "start": 615,
+        "end": 647
+      }
+    ]
+  },
+  {
+    "case_id": "altivec-yuv2packedx-partial-width-overflow",
+    "finding": {
+      "id": "ffmpeg-altivec-yuv2packedx-partial-width-overflow",
+      "finding_type": "out_of_bounds_write",
+      "cwe": "CWE-787",
+      "file": "libswscale/ppc/yuv2rgb_altivec.c",
+      "line_number": 708,
+      "severity": "high",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "The PowerPC AltiVec vertical YUV-to-packed-RGB scaler is installed for RGB24/BGR24 and four 32-bit RGB layouts without requiring the destination width to be a multiple of sixteen. Its loop runs while i < dstW but every iteration emits a complete sixteen-pixel vector: 48 bytes for 24-bit output or 64 bytes for 32-bit output. The final iteration therefore writes past an exact-size destination row whenever dstW is not a multiple of sixteen. The apparent tail handler cannot contain the write because the loop exits with i >= dstW and its condition is `if (i < dstW)`. The public sws_scale API accepts caller-owned exact-size output buffers, so even a one-pixel destination can receive the full vector store. This remains source-confirmed because the current arm64 host cannot execute AltiVec code.",
+      "code_snippet": "for (i = 0; i < dstW; i += 16) { ... out_rgba(R, G, B, out); } if (i < dstW) { i -= 16; ... }",
+      "poc": "On a PowerPC host with AltiVec enabled but without a replacing VSX general-X implementation, use public sws_scale with a non-multiple-of-16 destination width, a general vertical filter, one of the installed RGB24/BGR24/ABGR/BGRA/ARGB/RGBA outputs, and an exact-size destination allocation; ASan should report the final 48- or 64-byte vector store beyond the row.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "an unguarded non-multiple-of-sixteen destination reaches an AltiVec loop whose final iteration writes a complete packed-RGB vector beyond the public output buffer",
+        "steps": [
+          {
+            "file": "libswscale/ppc/swscale_altivec.c",
+            "line": 260,
+            "function": "ff_sws_init_swscale_ppc",
+            "code_snippet": "if (!(c->opts.flags & (SWS_BITEXACT | SWS_FULL_CHR_H_INT)) && !c->needAlpha) { switch (c->opts.dst_format) {",
+            "note": "The normal AltiVec dispatch checks flags, alpha, and output format but imposes no destination-width alignment requirement."
+          },
+          {
+            "file": "libswscale/ppc/swscale_altivec.c",
+            "line": 263,
+            "function": "ff_sws_init_swscale_ppc",
+            "code_snippet": "c->yuv2packedX = ff_yuv2abgr_X_altivec;",
+            "note": "The same assignment is made for six packed RGB layouts, making the vector routine the general vertical scaler."
+          },
+          {
+            "file": "libswscale/vscale.c",
+            "line": 166,
+            "function": "packed_vscale",
+            "code_snippet": "inst->yuv2packedX(..., *dst, dstW, sliceY);",
+            "note": "The general public scaling path forwards the caller's output row and exact destination width unchanged."
+          },
+          {
+            "file": "libswscale/ppc/yuv2rgb_altivec.c",
+            "line": 708,
+            "function": "yuv2packedX_altivec",
+            "code_snippet": "for (i = 0; i < dstW; i += 16) {",
+            "note": "Any positive remainder starts one final iteration even though fewer than sixteen output pixels remain."
+          },
+          {
+            "file": "libswscale/ppc/yuv2rgb_altivec.c",
+            "line": 764,
+            "function": "yuv2packedX_altivec",
+            "code_snippet": "out_abgr(R, G, B, out);",
+            "note": "The selected macro performs three 16-byte stores for 24-bit output or four for 32-bit output, overrunning an exact-size partial row."
+          },
+          {
+            "file": "libswscale/ppc/yuv2rgb_altivec.c",
+            "line": 797,
+            "function": "yuv2packedX_altivec",
+            "code_snippet": "if (i < dstW) { i -= 16; ... }",
+            "note": "After the loop, i is always greater than or equal to dstW, so the scratch-based partial handler is dead and cannot prevent the vector overrun."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libswscale/ppc/yuv2rgb_altivec.c",
+        "start": 675,
+        "end": 908
+      },
+      {
+        "path": "libswscale/ppc/swscale_altivec.c",
+        "start": 233,
+        "end": 284
+      },
+      {
+        "path": "libswscale/vscale.c",
+        "start": 125,
+        "end": 170
+      }
+    ]
   }
 ]

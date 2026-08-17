@@ -755,6 +755,33 @@ class TestRecordFinding:
         assert len(ctx.findings) == 1
         assert ctx.findings[0]["cwe"] == ""
 
+    def test_flat_trace_step_list_does_not_crash(self):
+        """Local models sometimes omit the compatibility trace wrapper."""
+        ctx = HunterContext(repo_path=str(FIXTURE_C_PROPAGATION))
+        tools = build_hunter_tools(ctx)
+        record = next(t for t in tools if t.name == "record_finding")
+
+        msg = record.invoke(
+            {
+                "file": "src/codec_a.c",
+                "line_number": 9,
+                "finding_type": "memory_safety",
+                "severity": "high",
+                "description": "unchecked copy",
+                "trace": [
+                    {
+                        "file": "src/codec_a.c",
+                        "line": 9,
+                        "note": "SINK: unchecked copy",
+                    }
+                ],
+            }
+        )
+
+        assert "Finding recorded" in msg
+        assert len(ctx.findings) == 1
+        assert len(ctx.findings[0]["vulnerability_trace"]["steps"]) == 1
+
     def test_streamed_trace_is_required_and_authoritative(self):
         """record_finding persists streamed steps without model reassembly."""
         ctx = HunterContext(
