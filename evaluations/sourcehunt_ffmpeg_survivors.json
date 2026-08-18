@@ -8206,5 +8206,153 @@
         "end": 205
       }
     ]
+  },
+  {
+    "case_id": "sox-nan-sample-rate-conversion-ub",
+    "finding": {
+      "id": "ffmpeg-sox-nan-sample-rate-conversion-ub",
+      "finding_type": "denial_of_service",
+      "cwe": "CWE-681",
+      "file": "libavformat/soxdec.c",
+      "line_number": 125,
+      "severity": "low",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The SoX demuxer decodes an attacker-owned IEEE-754 sample-rate field and rejects values that compare at or below zero or above INT_MAX. A quiet NaN makes both comparisons false, survives the fractional-rate path, and is then converted to int when assigned to AVCodecParameters.sample_rate. The committed harness executes the exact pinned sox_read_header() and makes UBSan abort at that production assignment. Exact later repair d2d79dca9a adds isnan() to the range check; the identical header is rejected cleanly.",
+      "code_snippet": "if (sample_rate <= 0 || sample_rate > INT_MAX) ... st->codecpar->sample_rate = sample_rate;",
+      "poc": "Run evaluations/run_ffmpeg_sox_nan_sample_rate_reproducer.py against the pinned configured tree. It feeds a little-endian SoX header containing quiet-NaN bits to the exact production header reader, records the UBSan abort, then extracts repair d2d79dca9a and verifies clean invalid-data rejection.",
+      "discovered_by": "sourcehunt:offline-post-pin-diff",
+      "vulnerability_trace": {
+        "summary": "an attacker-owned quiet NaN bypasses ordered floating-point range comparisons and reaches an undefined floating-to-integer conversion in the SoX header reader",
+        "steps": [
+          {
+            "file": "libavformat/soxdec.c",
+            "line": 72,
+            "function": "sox_read_header",
+            "code_snippet": "sample_rate = av_int2double(avio_rl64(pb));",
+            "note": "The file supplies all 64 bits of the little-endian IEEE-754 sample rate; 0x7ff8000000000000 decodes as a quiet NaN. The big-endian branch has the same domain."
+          },
+          {
+            "file": "libavformat/soxdec.c",
+            "line": 92,
+            "function": "sox_read_header",
+            "code_snippet": "if (sample_rate <= 0 || sample_rate > INT_MAX)",
+            "note": "Both ordered comparisons are false for NaN, so the malformed media value is accepted by the vulnerable range check."
+          },
+          {
+            "file": "libavformat/soxdec.c",
+            "line": 125,
+            "function": "sox_read_header",
+            "code_snippet": "st->codecpar->sample_rate = sample_rate;",
+            "note": "The quiet NaN is implicitly converted to int. UBSan aborts here because NaN is outside the representable integer range."
+          },
+          {
+            "file": "libavformat/soxdec.c",
+            "line": 92,
+            "function": "later repair d2d79dca9a",
+            "code_snippet": "if (sample_rate <= 0 || sample_rate > INT_MAX || isnan(sample_rate))",
+            "note": "The exact upstream repair rejects NaN before the fractional calculation and integer assignment; the repaired replay returns invalid data without a sanitizer report."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/soxdec.c",
+        "start": 55,
+        "end": 135
+      },
+      {
+        "path": "libavutil/intfloat.h",
+        "start": 20,
+        "end": 75
+      }
+    ]
+  },
+  {
+    "case_id": "maskfun-slice-boundary-signed-overflow-oob",
+    "finding": {
+      "id": "ffmpeg-maskfun-slice-boundary-signed-overflow-oob",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-190",
+      "file": "libavfilter/vf_maskfun.c",
+      "line_number": 171,
+      "severity": "low",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "Maskfun computes each slice boundary as h*jobnr/nb_jobs in signed int. The filter graph publicly accepts thread counts through INT_MAX, and generic image validation accepts a 1x2,080,410 frame. With 2,065 explicitly configured threads, job 2,064 makes the start and end products 4,293,966,240 and 4,296,046,650. UBSan aborts at the exact production multiplication. Without integer instrumentation, the wrapped start is -484 and Maskfun reads 484 bytes before the input plane under ASan. Exact later repair f7368f97b9 replaces both expressions with the int64-based ff_slice_pos() helper and makes the same last-slice replay clean. Auto threading is capped at 16 and is unaffected, so this is retained as a low-severity explicit-high-thread configuration root.",
+      "code_snippet": "const int slice_start = (h * jobnr) / nb_jobs; const int slice_end = (h * (jobnr+1)) / nb_jobs;",
+      "poc": "Run evaluations/run_ffmpeg_maskfun_slice_overflow_reproducer.py against the pinned configured tree. It records the signed overflow under UBSan, the resulting 484-byte pre-plane read under ASan-only instrumentation, and clean completion with exact repair f7368f97b9 plus its ff_slice_pos helper.",
+      "discovered_by": "sourcehunt:offline-post-pin-diff",
+      "vulnerability_trace": {
+        "summary": "an explicitly large public slice-thread count combines with valid media height to overflow Maskfun's signed boundary products and move its frame-plane pointers before their allocations",
+        "steps": [
+          {
+            "file": "libavfilter/avfiltergraph.c",
+            "line": 52,
+            "function": "filtergraph_options",
+            "code_snippet": "{ \"threads\", \"Maximum number of threads\", ... AV_OPT_TYPE_INT, { .i64 = 0 }, 0, INT_MAX, ... }",
+            "note": "The public graph option accepts the reproducer's explicit 2,065-thread count. Automatic selection is separately capped at 16 and cannot reach the overflow."
+          },
+          {
+            "file": "libavutil/imgutils.c",
+            "line": 301,
+            "function": "av_image_check_size2",
+            "code_snippet": "stride*(h + 128ULL) >= INT_MAX",
+            "note": "For width one, the conservative stride is 1,032. The selected height gives 2,147,115,216, below INT_MAX, so generic image validation accepts the geometry."
+          },
+          {
+            "file": "libavfilter/vf_maskfun.c",
+            "line": 113,
+            "function": "filter_frame",
+            "code_snippet": "FFMIN(s->planeheight[1], ff_filter_get_nb_threads(ctx))",
+            "note": "For accepted gray input, planeheight[1] equals the full height; the configured graph count therefore supplies nb_jobs=2,065 and eventually jobnr=2,064."
+          },
+          {
+            "file": "libavfilter/vf_maskfun.c",
+            "line": 171,
+            "function": "maskfun8",
+            "code_snippet": "const int slice_start = (h * jobnr) / nb_jobs; const int slice_end = (h * (jobnr+1)) / nb_jobs;",
+            "note": "Both boundary products exceed INT_MAX. UBSan aborts on 2,080,410*2,064; ordinary wrapping gives slice_start=-484 and slice_end=522."
+          },
+          {
+            "file": "libavfilter/vf_maskfun.c",
+            "line": 173,
+            "function": "maskfun8",
+            "code_snippet": "const type *src = (type *)in->data[p] + slice_start * src_linesize; ... dst[x] = src[x];",
+            "note": "The wrapped negative boundary moves src before the exact input plane. ASan reports a one-byte read 484 bytes before its 2,080,410-byte allocation."
+          },
+          {
+            "file": "libavfilter/vf_maskfun.c",
+            "line": 171,
+            "function": "later repair f7368f97b9",
+            "code_snippet": "const int slice_start = ff_slice_pos(h, jobnr, nb_jobs); const int slice_end = ff_slice_pos(h, jobnr + 1, nb_jobs);",
+            "note": "The exact Maskfun change uses the helper introduced by 218b4771a3, whose int64 product computes the intended final slice; the repaired replay writes the last output sample and exits cleanly."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/vf_maskfun.c",
+        "start": 100,
+        "end": 205
+      },
+      {
+        "path": "libavfilter/avfiltergraph.c",
+        "start": 44,
+        "end": 65
+      },
+      {
+        "path": "libavfilter/filters.h",
+        "start": 745,
+        "end": 770
+      },
+      {
+        "path": "libavutil/imgutils.c",
+        "start": 289,
+        "end": 315
+      }
+    ]
   }
 ]

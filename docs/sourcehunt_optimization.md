@@ -5238,3 +5238,86 @@ Direct deterministic regeneration reproduces ranks 2053–2076 exactly and seals
 ranks 2077–2100 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_2077_2100.json` with SHA-256
 `8a7f51251020667973636a5e6efa298c7918f7ca5e5c43ad6bcd6dae74d0e5a5`.
+
+### Blind wave 2077–2100 and the SoX and Maskfun roots
+
+The wave completed source-bearing work on all 24 exact paths in one pinned
+session. It settled 933 model calls using 9,029,168 input tokens and 188,822
+output tokens, 9,217,990 total, and made 192 raw candidate/finding calls. It
+submitted no formal findings.
+
+Post-campaign repair-diff review and sanitizer proof recover two roots that the
+online trajectories missed. The SoX demuxer reads an attacker-owned IEEE-754
+sample-rate field, but its ordered `<= 0 || > INT_MAX` check accepts a quiet
+NaN. Assignment to the integer `sample_rate` field then performs an undefined
+floating-to-integer conversion. The committed harness executes the exact pinned
+`sox_read_header()` and UBSan aborts at `soxdec.c:125`. Exact later repair
+`d2d79dca9a36a3e89880c389161934598d62690a` adds `isnan()` to the range check;
+the identical header is rejected cleanly.
+
+Maskfun computes slice boundaries as `h * jobnr / nb_jobs` in signed `int`.
+Generic image validation accepts a 1x2,080,410 gray frame, and the public graph
+thread option accepts 2,065 explicit threads. For job 2,064 the two products are
+4,293,966,240 and 4,296,046,650. UBSan aborts on the first exact production
+multiplication; without integer instrumentation the wrapped start is -484 and
+ASan reports a read 484 bytes before the 2,080,410-byte input plane. Exact later
+repair `f7368f97b92a0afe8dc8368a4b6749704b740317`, with helper prerequisite
+`218b4771a3`, uses the int64-based `ff_slice_pos()` and processes the last slice
+cleanly. Automatic graph threading is capped at 16, so this remains a
+low-severity root requiring an explicitly extreme thread configuration.
+
+The durable artifacts are
+`evaluations/ffmpeg_sox_nan_sample_rate_reproducer.c`,
+`evaluations/run_ffmpeg_sox_nan_sample_rate_reproducer.py`,
+`evaluations/ffmpeg_maskfun_slice_overflow_reproducer.c`, and
+`evaluations/run_ffmpeg_maskfun_slice_overflow_reproducer.py`. Both ignored
+reports pin commit `795bccdaf57772b1803914dee2f32d52776518e2`, record their exact
+repairs and clean repaired replays, and report `expected_observed=true`.
+
+The strongest remaining arithmetic candidates close under dominating domains.
+The aresample output allocation and `swr_convert()` consume the same resulting
+sample count, while the later channel-layout changes affect metadata and
+downmix semantics. Perlin's nested permutation lookups each return 0–255, so
+their sums index at most element 510. MPEG audio only performs its bitrate
+division after `header_count > header_threshold`. AAC's VMUL indices are masked
+to their exact four- and sixteen-element table domains. AptX uses static
+prediction orders no larger than 24 with an exact 48-element history.
+
+Parser, packet, and geometry review rejects the other memory-safety leaps. PJS
+uses dynamically allocated queue storage. ACT's exact-read helper reports short
+input and its 4,400 Hz path is rejected at header time. FFmetadata reads its
+guaranteed string terminator after a trailing backslash and returns an error
+sentinel for a zero timebase. Chomp receives a valid `AVPacket`: packet helpers
+assert that positive size implies non-NULL data, and its loop only shrinks the
+size. V410 encoder frames inherit the negotiated YUV444P10 plane and linesize
+contract; ZeroCodec's current and retained UYVY422 frames are both allocated by
+`ff_get_buffer()`, which supplies rows at least `2 * width` bytes wide.
+
+The MPEG parser advances over a finite `int`-sized packet and each VDPAU slice
+submission consumes a distinct start-code span, so `VdpPictureInfoMPEG1Or2`'s
+unsigned `slice_count` cannot wrap in one picture. `f_latency` runs only on a
+configured graph: `nb_inputs > 0` makes its upstream input slot present and
+linked, and its counters affect reporting rather than memory addressing.
+Film-grain allocation failure does not leave a dangerous size because all
+production callers check the returned pointer. The GnuTLS NULL-host path is an
+external-socket/client configuration crash before hostile-peer influence.
+
+The user-supplied H.264 source chain is direct corroboration of the retained
+`h264-slice-sentinel-collision` root. `current_slice` is a wider uncapped counter,
+while `slice_table` is a 16-bit array based two stride rows plus one element into
+storage poisoned with `0xFFFF`; each picture re-poisons the spare `mb_stride`
+column. Slice 65,535 therefore aliases the poison. With deblocking mode two at
+the left edge, the false top-left ownership match selects
+`top_borders[top_idx][-1]`, and the luma plus both chroma exchange variants write
+through the 96-byte record underflow. Repair `6d57428858` rejects
+`current_slice >= 0xFFFE` before incrementing. This evidence strengthens the
+existing root and is not counted again.
+
+The two new roots raise the totals to 143 confirmed root causes and 122
+dynamically reproduced issues. Historical coverage is 2,100/4,995 (42.04%),
+with 2,895 historically ranked files remaining.
+
+Direct deterministic regeneration reproduces ranks 2077–2100 exactly and seals
+ranks 2101–2124 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_2101_2124.json` with SHA-256
+`b8cdf7b3b2f99e71c893eecff42030cb765a9b5834550a4150dbd83207a79fc9`.
