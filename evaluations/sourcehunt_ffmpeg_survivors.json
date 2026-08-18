@@ -7360,5 +7360,207 @@
         "end": 160
       }
     ]
+  },
+  {
+    "case_id": "nellymoser-sample-count-overflow-undersized-output",
+    "finding": {
+      "id": "ffmpeg-nellymoser-sample-count-overflow-undersized-output",
+      "finding_type": "out_of_bounds_write",
+      "cwe": "CWE-787",
+      "file": "libavcodec/nellymoserdec.c",
+      "line_number": 176,
+      "severity": "high",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The Nellymoser decoder derives a signed-int block count from the public packet size, then multiplies it by 256 in signed int to allocate the output frame while retaining the original block count for decoding. A 1,073,741,888-byte packet contains 16,777,217 complete blocks and makes the product wrap from 4,294,967,552 to 256 samples. FFmpeg consequently allocates one 1,024-byte float block, then the second production decode iteration writes exactly beyond that allocation. A valid demand-zero virtual mapping backs the complete packet; UBSan records the signed count overflow and ASan records the heap overflow. Exact later repair 2864ce5e28 rejects block counts above INT_MAX / NELLY_SAMPLES and identifies an out-of-array access.",
+      "code_snippet": "frame->nb_samples = NELLY_SAMPLES * blocks; ... for (i=0 ; i<blocks ; i++) { nelly_decode_block(s, buf, samples_flt); samples_flt += NELLY_SAMPLES; }",
+      "poc": "Run evaluations/run_ffmpeg_nellymoser_sample_count_overflow_reproducer.py against the configured sanitizer build. Its ignored report records the valid 1,073,741,888-byte mapped packet, signed overflow, exact 1,024-byte output allocation, second-block production write, exact repair, and expected_observed=true.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "Nellymoser's signed 256-times-block-count expression wraps to one output block while its decode loop remains proportional to all 16,777,217 packet blocks",
+        "steps": [
+          {
+            "file": "libavcodec/nellymoser.h",
+            "line": 40,
+            "function": "file scope",
+            "code_snippet": "#define NELLY_BLOCK_LEN 64 ... #define NELLY_SAMPLES (2 * NELLY_BUF_LEN)",
+            "note": "Each 64-byte input block produces 256 mono float samples."
+          },
+          {
+            "file": "libavcodec/nellymoserdec.c",
+            "line": 152,
+            "function": "decode_tag",
+            "code_snippet": "int buf_size = avpkt->size;",
+            "note": "The public packet carries a representable 1,073,741,888-byte size backed by a complete demand-zero virtual mapping."
+          },
+          {
+            "file": "libavcodec/nellymoserdec.c",
+            "line": 157,
+            "function": "decode_tag",
+            "code_snippet": "blocks = buf_size / NELLY_BLOCK_LEN;",
+            "note": "The exact proof size is divisible by 64 and yields 16,777,217 complete blocks."
+          },
+          {
+            "file": "libavcodec/nellymoserdec.c",
+            "line": 159,
+            "function": "decode_tag",
+            "code_snippet": "if (blocks <= 0)",
+            "note": "The vulnerable tree rejects only non-positive counts, so the large positive count proceeds."
+          },
+          {
+            "file": "libavcodec/nellymoserdec.c",
+            "line": 170,
+            "function": "decode_tag",
+            "code_snippet": "frame->nb_samples = NELLY_SAMPLES * blocks;",
+            "note": "Signed 256 * 16,777,217 overflows from 4,294,967,552 to 256; UBSan diagnoses this exact expression."
+          },
+          {
+            "file": "libavcodec/nellymoserdec.c",
+            "line": 171,
+            "function": "decode_tag",
+            "code_snippet": "ff_get_buffer(avctx, frame, 0)",
+            "note": "The wrapped count allocates exactly 256 float samples, a 1,024-byte output region."
+          },
+          {
+            "file": "libavcodec/nellymoserdec.c",
+            "line": 175,
+            "function": "decode_tag",
+            "code_snippet": "for (i=0 ; i<blocks ; i++)",
+            "note": "The production loop keeps the original 16,777,217-block count rather than the wrapped frame count."
+          },
+          {
+            "file": "libavcodec/nellymoserdec.c",
+            "line": 176,
+            "function": "decode_tag",
+            "code_snippet": "nelly_decode_block(s, buf, samples_flt);",
+            "note": "After one full block advances samples_flt by 256, the second call writes four bytes exactly after the 1,024-byte allocation and ASan aborts."
+          },
+          {
+            "file": "libavcodec/nellymoserdec.c",
+            "line": 159,
+            "function": "later repair 2864ce5e28",
+            "code_snippet": "if (blocks <= 0 || blocks > INT_MAX / NELLY_SAMPLES)",
+            "note": "The exact later out-of-array repair bounds precisely the multiplication's safe domain."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/nellymoser.h",
+        "start": 34,
+        "end": 55
+      },
+      {
+        "path": "libavcodec/nellymoserdec.c",
+        "start": 63,
+        "end": 116
+      },
+      {
+        "path": "libavcodec/nellymoserdec.c",
+        "start": 148,
+        "end": 184
+      }
+    ]
+  },
+  {
+    "case_id": "vc2-encoder-dwt-signed-overflow",
+    "finding": {
+      "id": "ffmpeg-vc2-encoder-dwt-signed-overflow",
+      "finding_type": "integer_overflow",
+      "cwe": "CWE-190",
+      "file": "libavcodec/vc2enc_dwt.c",
+      "line_number": 78,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "The VC2 encoder stores intermediate wavelet coefficients in signed 32-bit dwtcoef arrays and repeatedly feeds the low-low subdivision through up to five transform levels. The 9/7 lifting stages multiply and add those attacker-controlled coefficients in signed int, so sufficiently amplified values overflow before the right shift. Public OSS-Fuzz testcase 5310290362433536 reaches this path through the VC2 encoder and was reported as an integer overflow in vc2_subband_dwt_97. Exact later repair 5f91556215 changes the working representation to uint32_t and explicitly casts each lifting sum back to dwtcoef before its arithmetic shift, preserving intended wrap semantics without signed undefined behavior. Follow-up repair 7c7ca349bc applies the same correction to the 5/3 and Haar variants. The public testcase did not reproduce under the local Darwin sanitizer build, so this consolidated transform-family root remains source-confirmed rather than counted as a local dynamic reproduction.",
+      "code_snippet": "synthl[1] -= (8*synthl[0] + 9*synthl[2] - synthl[4] + 8) >> 4;",
+      "poc": "Build the pinned VC2 encoder with UBSan and replay public OSS-Fuzz testcase 5310290362433536 through tools/target_enc_fuzzer.c for the VC2 encoder. OSS-Fuzz issue 490488944 records vc2_subband_dwt_97, dwt_plane, and avcodec_default_execute as the crash state; exact repair 5f91556215 names and fixes the signed overflow.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "public encoder samples become signed 32-bit coefficients, repeated wavelet levels amplify them, and signed lifting products overflow before the intended fixed-point shift",
+        "steps": [
+          {
+            "file": "libavcodec/vc2enc_dwt.h",
+            "line": 28,
+            "function": "file scope",
+            "code_snippet": "typedef int32_t dwtcoef;",
+            "note": "All transform inputs, scratch values, and coefficients use signed 32-bit storage in the vulnerable tree."
+          },
+          {
+            "file": "libavcodec/vc2enc.c",
+            "line": 1206,
+            "function": "vc2enc_options",
+            "code_snippet": "{\"wavelet_depth\", ... {.i64 = 4}, 1, 5, ...}",
+            "note": "The public encoder option permits up to five recursive transform levels and defaults to four."
+          },
+          {
+            "file": "libavcodec/vc2enc.c",
+            "line": 874,
+            "function": "dwt_plane",
+            "code_snippet": "buf[x] = pix[x] - s->diff_offset;",
+            "note": "Caller-controlled frame samples are converted directly into signed dwtcoef input values."
+          },
+          {
+            "file": "libavcodec/vc2enc.c",
+            "line": 899,
+            "function": "dwt_plane",
+            "code_snippet": "for (level = s->wavelet_depth-1; level >= 0; level--)",
+            "note": "Each low-low result is fed into the next transform level, amplifying intermediate coefficients."
+          },
+          {
+            "file": "libavcodec/vc2enc_dwt.c",
+            "line": 78,
+            "function": "vc2_subband_dwt_97",
+            "code_snippet": "synthl[1] -= (8*synthl[0] + 9*synthl[2] - synthl[4] + 8) >> 4;",
+            "note": "The lifting product and sum are evaluated in signed int before shifting; OSS-Fuzz reports integer overflow in this function."
+          },
+          {
+            "file": "libavcodec/vc2enc_dwt.c",
+            "line": 59,
+            "function": "later repair 5f91556215",
+            "code_snippet": "uint32_t *datal = (uint32_t *)data, *synth = (uint32_t *)t->buffer;",
+            "note": "The exact fuzzing repair moves intermediate arithmetic to defined unsigned wraparound."
+          },
+          {
+            "file": "libavcodec/vc2enc_dwt.c",
+            "line": 78,
+            "function": "later repair 5f91556215",
+            "code_snippet": "synthl[1] -= (dwtcoef)(8*synthl[0] + 9*synthl[2] - synthl[4] + 8) >> 4;",
+            "note": "Casting the wrapped sum to dwtcoef before the right shift restores the intended signed fixed-point interpretation."
+          },
+          {
+            "file": "libavcodec/vc2enc_dwt.c",
+            "line": 144,
+            "function": "later repair 7c7ca349bc",
+            "code_snippet": "uint32_t *synth = (uint32_t *)t->buffer, *synthl = synth, *datal = (uint32_t *)data;",
+            "note": "The follow-up applies the same invariant to the 5/3 and Haar transform families, consolidated into this root."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/vc2enc_dwt.h",
+        "start": 24,
+        "end": 53
+      },
+      {
+        "path": "libavcodec/vc2enc_dwt.c",
+        "start": 55,
+        "end": 254
+      },
+      {
+        "path": "libavcodec/vc2enc.c",
+        "start": 849,
+        "end": 903
+      },
+      {
+        "path": "libavcodec/vc2enc.c",
+        "start": 1200,
+        "end": 1212
+      }
+    ]
   }
 ]

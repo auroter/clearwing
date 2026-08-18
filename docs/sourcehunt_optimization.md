@@ -4733,3 +4733,54 @@ Direct deterministic regeneration reproduces ranks 1861–1884 exactly and
 seals ranks 1885–1908 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1885_1908.json` with SHA-256
 `18c97fd300ffe6ffee5484b2698720be2496443ef030ae5f0ed4c6bb31767fab`.
+
+### Blind wave 1885–1908
+
+The wave completed source-bearing work on all 24 exact paths in one pinned
+session. It settled 903 model calls using 8,847,840 input tokens and 158,588
+output tokens, 9,006,428 total, and made 170 raw candidate/finding calls. It
+submitted no formal findings.
+
+Two new roots survive post-campaign adjudication. Nellymoser derives
+16,777,217 complete blocks from a valid 1,073,741,888-byte packet, then the
+signed `256 * blocks` sample count wraps to 256. The decoder allocates only
+1,024 output bytes but retains the original block count, so its second block
+writes immediately beyond the allocation. The committed harness reproduces
+both the signed overflow under UBSan and the heap overflow under ASan; later
+repair `2864ce5e28` (upstream `f9482e1d01`) adds the exact
+`INT_MAX / NELLY_SAMPLES` bound.
+
+VC2's encoder wavelet transforms form one additional source-confirmed root.
+Signed 32-bit DWT coefficients are recursively amplified through as many as
+five levels, and the 9/7 lifting products and sums can overflow before their
+fixed-point shifts. Public OSS-Fuzz issue 490488944 and testcase
+5310290362433536 identify `vc2_subband_dwt_97`; repair `5f91556215` converts
+the working arithmetic to defined unsigned wraparound, and follow-up
+`7c7ca349bc` applies the same invariant to the 5/3 and Haar variants. The
+public testcase did not reproduce in the local Darwin sanitizer build, so the
+consolidated transform-family root is not counted as a local dynamic replay.
+
+The strongest remaining leads close under concrete type, framing, and
+ownership invariants. ReplayGain's `llabs` operand promotes safely and its
+empty-value pointer is never dereferenced. LLS has 36 aligned variable slots,
+so index 32 is valid. Container FIFO intentionally mutates the peeked head
+frame to record partial consumption, while ASS growth remains bounded by its
+`UINT_MAX` guard. AMR, XBM, and CAVS parser reads retain padded or previously
+buffered state. LATM, ChannelSplit, DSD, LZO, the MP3 tail, VAAPI, and the
+remaining codec/filter candidates supplied no surviving memory-safety trace.
+
+The user-supplied H.264 line-by-line chain independently corroborates the
+existing `h264-slice-sentinel-collision` root: slice 65,535 aliases the
+16-bit table's `0xFFFF` poison, the spare stride column is re-poisoned each
+picture, and the false top-left ownership match gates luma and chroma exchanges
+through `top_borders[-1]`. It is strong additional evidence, not a duplicate
+root.
+
+These two roots raise the totals to 132 confirmed root causes and 113
+dynamically reproduced issues. Historical coverage is 1,908/4,995 (38.20%),
+with 3,087 historically ranked files remaining.
+
+Direct deterministic regeneration reproduces ranks 1885–1908 exactly and
+seals ranks 1909–1932 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1909_1932.json` with SHA-256
+`8c0add0fe86e23c99f7fb0acf3d96d9aa2fde8850b73ceb4d85308faf82ad3f0`.
