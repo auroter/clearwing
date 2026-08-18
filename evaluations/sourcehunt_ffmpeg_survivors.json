@@ -7860,5 +7860,81 @@
         "end": 219
       }
     ]
+  },
+  {
+    "case_id": "wsd-short-metadata-uninitialized-disclosure",
+    "finding": {
+      "id": "ffmpeg-wsd-short-metadata-uninitialized-disclosure",
+      "finding_type": "information_disclosure",
+      "cwe": "CWE-457",
+      "file": "libavformat/wsddec.c",
+      "line_number": 85,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "The WSD demuxer allocates each fixed-size metadata field without initialization and accepts every nonnegative avio_read() result as if the complete field had been filled. A truncated file can therefore leave most of the allocation uninitialized; empty_string() reads all requested bytes, and a non-space byte sends the same buffer into the public metadata dictionary after only the final terminator is initialized. Exact later repair 4b83833087 replaces avio_read() with ffio_read_size(), which rejects every short field. Its commit explicitly identifies use of uninitialized memory, OSS-Fuzz issue 492587173, and testcase ffmpeg_dem_WSD_fuzzer-6596163492184064. The public testcase was not replayed under local MemorySanitizer, so this remains source-confirmed rather than counted as a local dynamic reproduction.",
+      "code_snippet": "if ((ret = avio_read(s->pb, buf, size)) < 0) {",
+      "poc": "Build the pinned WSD demuxer with MemorySanitizer and replay OSS-Fuzz testcase ffmpeg_dem_WSD_fuzzer-6596163492184064. Exact repair 4b83833087245910ed00b0f277e7b08b90b6611e changes the read to ffio_read_size() and names the uninitialized-memory issue.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a truncated WSD metadata field short-fills an uninitialized heap allocation, after which the demuxer scans and may retain bytes that the input never supplied",
+        "steps": [
+          {
+            "file": "libavformat/wsddec.c",
+            "line": 122,
+            "function": "wsd_read_header",
+            "code_snippet": "text_offset = avio_rb32(pb);",
+            "note": "Version 1.x input selects the metadata offset, and a seekable truncated file can place it near EOF."
+          },
+          {
+            "file": "libavformat/wsddec.c",
+            "line": 81,
+            "function": "get_metadata",
+            "code_snippet": "buf = av_malloc(size + 1);",
+            "note": "The fixed 32-, 128-, or 512-byte metadata body is allocated without initialization."
+          },
+          {
+            "file": "libavformat/wsddec.c",
+            "line": 85,
+            "function": "get_metadata",
+            "code_snippet": "if ((ret = avio_read(s->pb, buf, size)) < 0)",
+            "note": "avio_read() can return a positive short count at EOF, which this lower-only check accepts while leaving the allocation remainder untouched."
+          },
+          {
+            "file": "libavformat/wsddec.c",
+            "line": 90,
+            "function": "get_metadata",
+            "code_snippet": "if (empty_string(buf, size))",
+            "note": "empty_string() scans every requested byte rather than the number actually read, producing the confirmed uninitialized-memory access."
+          },
+          {
+            "file": "libavformat/wsddec.c",
+            "line": 96,
+            "function": "get_metadata",
+            "code_snippet": "av_dict_set(&s->metadata, tag, buf, AV_DICT_DONT_STRDUP_VAL);",
+            "note": "After writing only buf[size], the demuxer publishes the buffer as metadata; uninitialized nonzero bytes can therefore survive into an observable dictionary value."
+          },
+          {
+            "file": "libavformat/wsddec.c",
+            "line": 85,
+            "function": "later repair 4b83833087",
+            "code_snippet": "if ((ret = ffio_read_size(s->pb, buf, size)) < 0)",
+            "note": "The exact OSS-Fuzz repair requires the complete field and rejects EOF or every short read before either consumer sees the buffer."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/wsddec.c",
+        "start": 31,
+        "end": 168
+      },
+      {
+        "path": "libavformat/aviobuf.c",
+        "start": 615,
+        "end": 673
+      }
+    ]
   }
 ]

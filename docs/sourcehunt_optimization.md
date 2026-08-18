@@ -4943,3 +4943,56 @@ Direct deterministic regeneration reproduces ranks 1957–1980 exactly and
 seals ranks 1981–2004 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1981_2004.json` with SHA-256
 `329972f6fcd40f3aebfede3ce1f704e3b3701b08adba8b2d87a594d5b29ca357`.
+
+### Blind wave 1981–2004 and WSD uninitialized metadata
+
+The wave completed source-bearing work on all 24 exact paths in one pinned
+session. It settled 839 model calls using 7,788,438 input tokens and 151,552
+output tokens, 7,939,990 total, and made 122 raw candidate/finding calls. It
+submitted no formal findings.
+
+Offline adjudication retains one source-confirmed root. WSD allocates each
+fixed-size metadata field without initialization and treats every nonnegative
+`avio_read()` result as a complete read. A truncated field can therefore leave
+most of the allocation untouched; `empty_string()` scans the complete requested
+size, and the same buffer can be retained as public metadata after only its
+final terminator is initialized. Exact repair `4b83833087` changes the read to
+`ffio_read_size()` and explicitly identifies use of uninitialized memory,
+OSS-Fuzz issue 492587173, and testcase
+`ffmpeg_dem_WSD_fuzzer-6596163492184064`. The public testcase was not replayed
+under local MemorySanitizer, so this root does not increment the dynamic total.
+
+The strongest codec and arithmetic leads close under concrete invariants.
+Nellymoser's saved `bitsum` and later `bits[]` use the identical clipped
+allocation formula, so `bitsum > NELLY_DETAIL_BITS` proves the nonnegative
+cumulative loop reaches 198 within its 124 entries. MSS2's odd rectangle sizes
+write into the macroblock-padded VC-1 work frame, including ceil-divided chroma
+storage. Generic image validation keeps PNG row products representable before
+its pass-size helper. LCEVC parses each process block through a payload-limited
+bit-reader subcontext; an exhausted checked reader cannot escape the payload or
+its mandatory padding, and a negative residual skip merely rewinds clipped
+reader state. OpenH264 owns and contracts its returned dimensions, strides, and
+planes, while VideoToolbox accepts only mapped CoreVideo formats whose API-defined
+plane counts fit `AVFrame`.
+
+The remaining format, filter, utility, and compatibility leads also close.
+Probe buffers provide mandatory tail padding; SAB indices and allocations are
+self-consistent; VOC's 24-bit wrap affects malformed output metadata only; iLBC
+decodes the configured complete frame prefix; ATilt's work buffer has exactly
+twice the maximum order; and TMV sizes are bounded before AVIO handles EOF.
+`bin2c` passes the selected name as a `%s` argument rather than a format string,
+and C23 deliberately leaves overflowing `stdc_bit_ceil` undefined. Aviocat's
+negative-duration throttle is an explicit invalid option to a standalone test
+utility, not a media-controlled denial of service, so it is excluded under the
+same configuration-only criterion. Post-pin changes on the selected paths are
+benign flush, compatibility, hardware-format, and syntax corrections except for
+the exact WSD repair.
+
+The WSD root raises the totals to 137 confirmed root causes and 117 dynamically
+reproduced issues. Historical coverage is 2,004/4,995 (40.12%), with 2,991
+historically ranked files remaining.
+
+Direct deterministic regeneration reproduces ranks 1981–2004 exactly and seals
+ranks 2005–2028 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_2005_2028.json` with SHA-256
+`401079aa57821d5e673424280d998c7c9d4d86f6e721181ea5d6e05865782937`.
