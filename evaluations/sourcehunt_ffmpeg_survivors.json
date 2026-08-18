@@ -7069,5 +7069,84 @@
         "end": 898
       }
     ]
+  },
+  {
+    "case_id": "bayer-odd-width-pair-overrun",
+    "finding": {
+      "id": "ffmpeg-bayer-odd-width-pair-overrun",
+      "finding_type": "out_of_bounds_read_write",
+      "cwe": "CWE-787",
+      "file": "libswscale/bayer_template.c",
+      "line_number": 197,
+      "severity": "high",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "Every Bayer conversion helper processes a complete two-pixel by two-row block, but the public sws_scale path forwards src_w without requiring it to be even. For a 3x2 BAYER_BGGR8 source and same-size RGB24 destination with exact width-derived strides, the final i=2 block reads source offset 6 from a six-byte plane and writes destination offsets 18 through 20 after an 18-byte plane. Separate guard-page executions through the public API fault at the exact source and destination boundaries. The same pair loop and missing width check remain in current origin/master; no later repair is known.",
+      "code_snippet": "for (i = 0 ; i < width; i+= 2) { BAYER_TO_RGB24_COPY; src += 2 * BAYER_SIZEOF; dst += 6; }",
+      "poc": "Run evaluations/run_ffmpeg_bayer_odd_width_reproducer.py against the configured pinned static libraries. It compiles the matching public-API C harness and records independent exact-source and exact-destination guard-page faults with expected_observed=true.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "an odd public Bayer width reaches helpers that round the row up to a complete two-pixel block, crossing both exact source and destination plane boundaries",
+        "steps": [
+          {
+            "file": "libswscale/swscale.c",
+            "line": 1040,
+            "function": "scale_internal",
+            "code_snippet": "isBayer(sws->src_format) && srcSliceH <= 1",
+            "note": "The Bayer-specific public slice validation constrains height but imposes no even-width invariant; sws_getContext and sws_scale accept the reproduced 3x2 frame."
+          },
+          {
+            "file": "libswscale/swscale_unscaled.c",
+            "line": 1671,
+            "function": "bayer_to_rgb24_wrapper",
+            "code_snippet": "copy(srcPtr, srcStride[0], dstPtr, dstStride[0], c->opts.src_w);",
+            "note": "The unscaled public path passes the odd configured source width and caller-owned exact strides directly to the Bayer helper."
+          },
+          {
+            "file": "libswscale/bayer_template.c",
+            "line": 196,
+            "function": "BAYER_RENAME(rgb24_copy)",
+            "code_snippet": "for (i = 0 ; i < width; i+= 2)",
+            "note": "For width three, iterations begin at pixels zero and two, and both invoke a complete two-pixel conversion block."
+          },
+          {
+            "file": "libswscale/bayer_template.c",
+            "line": 60,
+            "function": "BAYER_TO_RGB24_COPY",
+            "code_snippet": "R(0, 0) = R(0, 1) = R(1, 1) = R(1, 0) = S(1, 1) >> BAYER_SHIFT;",
+            "note": "In the final block, S(1,1) resolves to source offset 6, immediately after the exact six-byte 3x2 BAYER_BGGR8 plane; the source-guard run terminates with SIGBUS."
+          },
+          {
+            "file": "libswscale/bayer_template.c",
+            "line": 51,
+            "function": "R/G/B macros",
+            "code_snippet": "R(y, x) dst[(y)*dst_stride + (x)*3 + BAYER_R]",
+            "note": "The x=1 stores in the final block address the fourth logical pixel of each row. On the second row, the three RGB components occupy offsets 18 through 20 after the exact 18-byte destination; the independent destination-guard run terminates with SIGBUS."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libswscale/bayer_template.c",
+        "start": 33,
+        "end": 120
+      },
+      {
+        "path": "libswscale/bayer_template.c",
+        "start": 187,
+        "end": 297
+      },
+      {
+        "path": "libswscale/swscale_unscaled.c",
+        "start": 1638,
+        "end": 1685
+      },
+      {
+        "path": "libswscale/swscale.c",
+        "start": 1019,
+        "end": 1050
+      }
+    ]
   }
 ]

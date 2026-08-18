@@ -4395,3 +4395,60 @@ Direct deterministic regeneration reproduces ranks 1717–1740 exactly and seals
 ranks 1741–1764 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1741_1764.json` with SHA-256
 `65a6a5af0f738f0ab74967aaf2d8e47d020a027dd8e44840c44155c47ca4cfd1`.
+
+### Blind wave 1741–1764 and odd-width Bayer plane overrun
+
+The wave completed source-bearing work on all 24 exact paths in one pinned
+session. It settled 924 model calls using 9,021,650 input tokens and 163,964
+output tokens, 9,185,614 total, and made 190 raw candidate/finding calls. It
+submitted no formal findings.
+
+Offline adjudication confirms one of the model's unresolved raw candidates.
+Every Bayer conversion helper operates on two-pixel by two-row blocks, but the
+public unscaled wrapper forwards `src_w` without requiring it to be even. A 3x2
+`BAYER_BGGR8` frame with exact width-derived source and RGB24 destination
+strides reaches a final block beginning at pixel two. That block reads source
+offset six after a six-byte plane and writes destination offsets 18 through 20
+after an 18-byte plane. Independent public-API guard-page runs terminate with
+`SIGBUS` at the exact source and destination boundaries. The same pair loop and
+missing width check remain in current `origin/master`; no later repair is known.
+
+The durable artifact is
+`evaluations/run_ffmpeg_bayer_odd_width_reproducer.py` with its matching C
+harness. Its ignored report pins commit
+`795bccdaf57772b1803914dee2f32d52776518e2`, records both independent boundary
+faults, and reports `expected_observed=true`.
+
+This wave also exposes a treatment-level closure failure. The hunter formed the
+correct odd-width candidate but repeatedly issued an identical candidate update;
+the duplicate-call guard skipped it and the candidate checkpoint then prevented
+the caller validation needed for formal submission. The frozen treatment remains
+unchanged for comparability, while offline adjudication retains the dynamically
+confirmed root.
+
+The other transient leads close under concrete contracts. RTP MPEG-TS bounds
+its carry buffer with `FFMIN` and the transport parser stays within complete
+188-byte packets; common mux validation rejects AIFF packets with invalid stream
+indices. AAC coupling uses static scale-factor-band tables, rejects
+`max_sfb > num_swb`, and stores 1,024 coefficients. H.263/x86 checks decoded
+coefficient indices below 64, and XFace's preceding same-row guard excludes the
+apparent bottom-row indices 47–49.
+
+Format and framework contracts close the remaining stronger leads. WebP and QOA
+fixed header probes remain in mandatory packet padding; invalid QOA read lengths
+return an error. TED's automatic AVBPrint mode never allocates, MSF's block-align
+field is an `int`, and SOL ignores the invalid timebase before downstream audio
+rate checks reject it. VideoToolbox scaling rejects invalid dimensions and crop
+metadata, libvpx buffer references preserve external-frame lifetime, XVideo's
+destination rectangle controls server scaling rather than the shared source
+buffer, and H.265 metadata rejects reserved VCL content before slice casting.
+The MLP trajectory explicitly concluded that it had no vulnerability.
+
+The Bayer root raises the totals to 127 confirmed root causes and 110
+dynamically reproduced issues. Historical coverage is 1,764/4,995 (35.32%),
+with 3,231 historically ranked files remaining.
+
+Direct deterministic regeneration reproduces ranks 1741–1764 exactly and seals
+ranks 1765–1788 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1765_1788.json` with SHA-256
+`9a03c6f55d48748269920484c54cfc14d958bfd3943b1d81233a9cf932cd44e5`.
