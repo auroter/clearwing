@@ -4637,3 +4637,51 @@ Direct deterministic regeneration reproduces ranks 1813–1836 exactly and
 seals ranks 1837–1860 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1837_1860.json` with SHA-256
 `5665aab6ae54163022ec8ef08b7a4841e92cc3943ecbfe46294232e3ada7cdf7`.
+
+### Blind wave 1837–1860
+
+The wave completed source-bearing work on all 24 exact paths in one pinned
+session. It settled 896 model calls using 8,923,278 input tokens and 142,156
+output tokens, 9,065,434 total, and made 159 raw candidate/finding calls. It
+submitted no formal findings.
+
+The strongest apparent heap-overflow lead in MJPEG unescaping is false. Each
+ordinary stuffed-zero sequence consumes `0xFF 0x00` and emits one `0xFF`, while
+JPEG-LS consumes 16 bits and emits 15; neither path can expand the input-sized
+padded allocation. AptX derives `nb_samples` from the floor of packet size over
+block size, so its loop reads only complete blocks and returns the consumed
+prefix. Snow's negative-edge adjustment subtracts a negative coordinate from
+the OBMC pointer, moving forward into the table before reducing the active
+width or height, not before the table as alleged. MJPEG-B's unsigned skip is
+clamped by `bytestream2_skip` to the remaining input.
+
+The remaining codec/parser leads close under established padding and framing
+contracts. H.261 macroblock filters operate on codec-allocated aligned frames.
+The MPEG-4 and generic bitstream readers rely on their explicit
+`AV_INPUT_BUFFER_PADDING_SIZE` contract. FFV1's range coder stops advancing at
+`bytestream_end` and records overread state. AAC/AC-3, BMP, and WebP arithmetic
+can alter parser framing state but did not establish an undersized downstream
+object or memory escape. GDV's audio size is bounded by 16-bit sample rate and
+frame-rate fields plus at most two channels and two bytes per sample. The TEA
+callers supply either a full eight-byte IV or NULL.
+
+Filter and utility candidates also close. `setts_filter` receives a valid empty
+packet object at EOF rather than a NULL packet pointer. Hwdownload's raw frames
+pointer remains owned by `hwframes_ref` and is used only while that reference
+is present. Audio frame-pool construction rejects any sample-count/channel
+product above `INT_MAX`, so ashowinfo's per-plane checksum length cannot wrap
+for a valid filter frame. Stereotools uses an even allocation and an even
+modulo index, colorspace matrices come from bounded static descriptors, and
+monochrome error-diffusion buffers have three deliberate tail elements.
+Colorcontrast, huesaturation, YUV4MPEG output, TTY metadata, and the remaining
+leads supplied no surviving memory-safety trace. None of the 24 selected files
+has a post-pin diff on current `origin/master` to contradict these closures.
+
+No new root survives adjudication, so totals remain 130 confirmed root causes
+and 112 dynamically reproduced issues. Historical coverage is 1,860/4,995
+(37.24%), with 3,135 historically ranked files remaining.
+
+Direct deterministic regeneration reproduces ranks 1837–1860 exactly and
+seals ranks 1861–1884 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1861_1884.json` with SHA-256
+`7259c8596427b6b3484a87fe5bc518a137bf7ad0550dd1701bc7427caa194ec7`.
