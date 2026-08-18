@@ -5321,3 +5321,66 @@ Direct deterministic regeneration reproduces ranks 2077–2100 exactly and seals
 ranks 2101–2124 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_2101_2124.json` with SHA-256
 `b8cdf7b3b2f99e71c893eecff42030cb765a9b5834550a4150dbd83207a79fc9`.
+
+### Blind wave 2101–2124 review
+
+The wave completed source-bearing work on all 24 exact paths in one pinned
+session. It settled 889 model calls using 8,737,076 input tokens and 168,925
+output tokens, 8,906,001 total, and made 189 raw candidate/finding calls. It
+submitted no formal findings, and offline adjudication retained no new root.
+
+The strongest indexing candidates close under exact value domains. Signature's
+five words are base-three encodings of five ternary digits, so their maximum is
+242 and `pos / 8` remains within each 31-byte coarse-signature row. QDM2's
+`random_dequant_index` uses the same 0–242 input; its greatest first digit is
+`242 / 81 = 2`, exactly the last column of `dequant_1bit[2][3]`. AAC rejects an
+escape width above eight before adding four, so its cube-root index is at most
+8,191, the final table element. HEVC validates `log2_max_trafo_size <= 5` before
+the luma and chroma transform dispatches.
+
+Buffer and arithmetic review likewise rejects the remaining direct leads. QOA
+clips the final slice endpoint to `nb_samples`, and its packet-size expression
+accounts for every channel slice. The MPEG audio synthesis buffers contain
+1,024 elements, leaving the copied 32-element wrap region at indices 512–543
+well inside the allocation. Lossless byte addition bounds its word loop and
+tail to the caller-owned width. Volumedetect negotiates S16/S16P, bounding its
+histogram index. The cube-root generator processes its union-backed temporary
+double table in descending order specifically so each output write cannot
+clobber a not-yet-read lower entry.
+
+Start-code and parser candidates also close. `avpriv_find_start_code()` returns
+from its three-byte prefix loop at short input; only a buffer with a fourth byte
+reaches the clamped four-byte reload. Its pointer stays at or before `end`, so
+the H.264, HEVC, MPEG-4, and VC-1 extradata split offsets stay within the packet.
+The URL decoder increments past `%` before applying its two-byte lookahead
+guard; a terminal percent therefore takes the literal branch rather than
+reading past the terminator. RealText uses bounded text and BPrint helpers, DVB
+subtitle probing checks the complete six-byte header and declared segment span,
+and the one-byte EAC probe tail is inside mandatory zero probe padding; the EAC
+decoder separately rejects packets shorter than `76 * channels`.
+
+ASF decryption applies RC4 to the exact byte length but confines MultiSwap to
+`len >> 3` complete qwords, with `len >= 16` guaranteeing at least two. Its last
+qword read and write are therefore within the final complete block even when
+trailing bytes exist. FFHash's local output buffer exceeds both the maximum hex
+and Base64 encodings, and all production hash callers provide positive bounded
+capacities. Format-list self-references intentionally add an ownership record
+without unreferencing the existing pointer. Swscale pads every small dither row
+to a full execution block; for larger matrices the aligned masked base leaves a
+complete block before the row boundary.
+
+The RV30, VC-1, and PPC DSP candidates inherit decoder edge-emulation and
+frame-padding contracts. RV30 explicitly emulates boundary regions before its
+fractional-pixel kernels, while codec-allocated PPC rows have the horizontal
+and vertical padding required by their vector loads. The selected DOVI and BSF
+headers expose structure or ownership contracts rather than an independent
+media-controlled memory sink.
+
+Totals remain 143 confirmed root causes and 122 dynamically reproduced issues.
+Historical coverage is 2,124/4,995 (42.52%), with 2,871 historically ranked
+files remaining.
+
+Direct deterministic regeneration reproduces ranks 2101–2124 exactly and seals
+ranks 2125–2148 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_2125_2148.json` with SHA-256
+`13267e6db11fe1a6d5baf17d2c9cd04cca76745b425824568e086a720757712e`.
