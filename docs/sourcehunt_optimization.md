@@ -5164,3 +5164,77 @@ Direct deterministic regeneration reproduces ranks 2029–2052 exactly and seals
 ranks 2053–2076 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_2053_2076.json` with SHA-256
 `44aa4ac8db49e71578f195cf7beebbd295f5417afe3a1352cf37dfd406688ff4`.
+
+### Blind wave 2053–2076 and the LZF padding root
+
+The wave completed source-bearing work on all 24 exact paths in one pinned
+session. It settled 907 model calls using 8,888,703 input tokens and 181,301
+output tokens, 9,070,004 total, and made 192 raw candidate/finding calls. It
+submitted no formal findings.
+
+Post-campaign repair-diff review and sanitizer proof recover one root that the
+online LZF trajectory missed. `ff_lzf_uncompress()` returns its decompressed
+allocation without the zero padding required by FFmpeg bit readers. NotchLC
+passes that storage directly into a `GetBitContext`. Two 32-byte literal runs
+followed by a two-byte run fill an exact 66-byte allocation; a legal final
+16-bit read then makes the 32-bit bit-reader cache load cross the heap boundary.
+The committed harness executes the pinned production LZF helper and inline bit
+reader, and ASan reports a four-byte heap over-read one byte after the
+allocation. Exact later repair `fe47696aa1` reserves and zeroes
+`AV_INPUT_BUFFER_PADDING_SIZE`; its commit identifies the out-of-array read and
+public proof files, and the repaired replay exits cleanly with the expected
+tail value.
+
+The durable artifacts are
+`evaluations/ffmpeg_lzf_padding_overread_reproducer.c` and
+`evaluations/run_ffmpeg_lzf_padding_overread_reproducer.py`. The ignored report
+pins commit `795bccdaf57772b1803914dee2f32d52776518e2`, identifies exact repair
+`fe47696aa1eb3b4f2359b9c4416c529912deee38`, records the 69-byte compressed
+input, 66-byte vulnerable output/allocation, ASan abort, clean 134-byte repaired
+allocation, and reports `expected_observed=true`.
+
+The strongest arithmetic and indexing leads close under dominating domains.
+The greatest LSP cosine argument is 16,352, below `0x3fff`. R210's generic
+image check proves `(8*w + 1024) * (h + 128) < INT_MAX`, which is stronger than
+its `4*align64(w)*h` packet expression. Palette conversion clamps before table
+indexing, and the integer-math lookup indices are intrinsically table-sized.
+VVC parsing and wide-angle mapping confine angular modes to the documented
+`-14..80` domain, whose derived absolute angle index is at most 30. H.263 and
+DV table indices stay within their declared arrays.
+
+Codec and caller contracts reject the remaining buffer hypotheses. The fixed
+SBR caller offsets `X_low` by two before the `i-2` accesses. Every S302M
+channel-pair consumes exactly two samples, and Monkey's Audio supplies only the
+static positive even filter orders 16, 32, 64, 256, and 1,280. The generic
+encoder wrapper rejects Comfort Noise frames above its 640-sample allocation.
+`swr_convert_frame()` passes the output frame's sample capacity as `out_count`
+and buffers excess input. H.264 DSP initialization installs complete C
+fallbacks before architecture overrides. CAF reserves ten bytes before writing
+at most two five-byte variable integers; BFI validates ordered nonnegative
+offsets and bounded packet growth; BPrint callers check the returned actual
+capacity.
+
+The other ownership and platform candidates also fail to produce a media-driven
+memory escape. AExciter runtime commands recompute parameters for the already
+negotiated channel layout, not a new larger layout. Split uses refcounted frame
+ownership. Sndio resets its full staging buffer independently of device short
+writes, while its device-negotiated geometry is not bitstream-controlled.
+Filter-units post-pin changes are bitstream-format and include/API maintenance.
+The other selected-path changes add a fixed-frame encoder capability, remove PPC
+CPU-detection code, or widen H.264 DSP strides; none repairs an additional
+memory-safety root.
+
+The user-supplied H.264 slice-table chain remains direct corroboration of
+`h264-slice-sentinel-collision`: slice 65,535 aliases the 16-bit `0xFFFF`
+poison, each picture re-poisons the spare stride column, the deblocking-only
+ownership comparison admits `top_borders[-1]`, and the luma and chroma
+exchanges write through the 96-byte record underflow. It is not counted again.
+
+The LZF root raises the totals to 141 confirmed root causes and 120 dynamically
+reproduced issues. Historical coverage is 2,076/4,995 (41.56%), with 2,919
+historically ranked files remaining.
+
+Direct deterministic regeneration reproduces ranks 2053–2076 exactly and seals
+ranks 2077–2100 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_2077_2100.json` with SHA-256
+`8a7f51251020667973636a5e6efa298c7918f7ca5e5c43ad6bcd6dae74d0e5a5`.

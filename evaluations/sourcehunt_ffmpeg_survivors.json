@@ -8127,5 +8127,84 @@
         "end": 114
       }
     ]
+  },
+  {
+    "case_id": "lzf-decompressed-buffer-missing-padding-overread",
+    "finding": {
+      "id": "ffmpeg-lzf-decompressed-buffer-missing-padding-overread",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavcodec/lzf.c",
+      "line_number": 104,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The LZF helper returns its decompressed allocation without the mandatory zero padding expected by FFmpeg bit readers. NotchLC passes that output directly into a GetBitContext. Two 32-byte literal runs followed by a two-byte run make the vulnerable av_fast_realloc path reserve and fill exactly 66 bytes; a legal 16-bit tail read then performs a four-byte cache load across the heap boundary. The committed harness executes the pinned production LZF helper and inline bit reader, and ASan reports a four-byte heap over-read one byte after the allocation. Exact later repair fe47696aa1 reserves and zeroes AV_INPUT_BUFFER_PADDING_SIZE bytes, explicitly identifies an out-of-array read and public oddlist.mov/poc.mov inputs, and makes the same harness pass cleanly.",
+      "code_snippet": "ret = lzf_realloc(buf, len + s, allocated_size); ... *size = len;",
+      "poc": "Run evaluations/run_ffmpeg_lzf_padding_overread_reproducer.py against the pinned configured tree. It records the exact 66-byte vulnerable allocation and ASan over-read, then extracts repair fe47696aa1 and verifies the same tail read succeeds with zeroed padding.",
+      "discovered_by": "sourcehunt:offline-post-pin-diff",
+      "vulnerability_trace": {
+        "summary": "attacker-controlled LZF output can fill its allocation exactly, but a downstream codec initializes a padding-reliant bit reader over that unpadded storage",
+        "steps": [
+          {
+            "file": "libavcodec/lzf.c",
+            "line": 65,
+            "function": "ff_lzf_uncompress",
+            "code_snippet": "ret = lzf_realloc(buf, len + s, allocated_size);",
+            "note": "Literal and backreference growth reserve only the logical output bytes, with no AV_INPUT_BUFFER_PADDING_SIZE tail."
+          },
+          {
+            "file": "libavcodec/lzf.c",
+            "line": 104,
+            "function": "ff_lzf_uncompress",
+            "code_snippet": "*size = len; return 0;",
+            "note": "Successful decompression returns without allocating or zeroing the padding required by bitstream cache loads."
+          },
+          {
+            "file": "libavcodec/notchlc.c",
+            "line": 501,
+            "function": "decode_frame",
+            "code_snippet": "bytestream2_init(gb, s->lzf_buffer, uncompressed_size);",
+            "note": "The media decoder publishes the LZF output as its complete decompressed input without copying it into a padded packet allocation."
+          },
+          {
+            "file": "libavcodec/notchlc.c",
+            "line": 250,
+            "function": "decode_blocks",
+            "code_snippet": "init_get_bits8(&bit, dgb.buffer, bytestream2_get_bytes_left(&dgb));",
+            "note": "NotchLC wraps slices of that same storage in a GetBitContext, whose 32-bit cache reads rely on mandatory tail padding."
+          },
+          {
+            "file": "libavcodec/lzf.c",
+            "line": 105,
+            "function": "later repair fe47696aa1",
+            "code_snippet": "lzf_realloc(buf, len + l + AV_INPUT_BUFFER_PADDING_SIZE, ...); ... memset(*buf + len, 0, AV_INPUT_BUFFER_PADDING_SIZE);",
+            "note": "The exact out-of-array-read repair reserves and initializes the missing contract bytes; the repaired replay exits cleanly with a 134-byte allocation."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/lzf.c",
+        "start": 50,
+        "end": 110
+      },
+      {
+        "path": "libavcodec/notchlc.c",
+        "start": 475,
+        "end": 522
+      },
+      {
+        "path": "libavcodec/notchlc.c",
+        "start": 240,
+        "end": 285
+      },
+      {
+        "path": "libavcodec/get_bits.h",
+        "start": 175,
+        "end": 205
+      }
+    ]
   }
 ]
