@@ -5775,3 +5775,94 @@ Direct deterministic regeneration reproduces ranks 2221–2244 exactly and
 seals ranks 2245–2268 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_2245_2268.json` with SHA-256
 `117f1ce4120a5b11eb04d3d0fb2889b21824cf8132b1625ec8a91af655ec9d13`.
+
+### Blind wave 2245–2268 and four reproduced roots
+
+The wave completed source-bearing work on all 24 exact paths in one pinned
+session. It settled 924 model calls using 8,894,968 input tokens and 154,578
+output tokens, 9,049,546 total, and made 182 raw candidate/finding calls. It
+submitted no formal findings.
+
+One terminal-ledger candidate survives exact-source proof. The flanger filter
+accepts an unspecified 561-channel layout, 384-kHz audio, speed 0.1, and phase
+100. This creates a 3,840,000-entry LFO. At channel 560, the production signed
+integer phase product is 2,150,400,000 and overflows before its conversion to
+double. UBSan reports the exact expression in `af_flanger.c:140`. Ordinary
+wrapping produces -2,144,567,296 and a remainder of -1,847,296; a
+poisoned-prefix replay makes ASan report the resulting four-byte pre-LFO read.
+A floating-point multiplication and modulo guard processes the same frame
+cleanly. Current master remains unchecked.
+
+Offline repair review retains a COOK decoder root. Initialization checks the
+current subpacket count plus each subpacket's channel count instead of the
+cumulative channel total. Four stereo subpackets therefore pass for a
+six-channel output while claiming eight channels. Decoding advances `ch_idx`
+by two per accepted subpacket, and a deterministic valid packet fill reaches
+indices six and seven. ASan reports an eight-byte read immediately after the
+six-pointer, 48-byte output array. Exact repair
+`1152139b4898888f7ca3daa1caca715c87dc1e85` tracks cumulative channels,
+explicitly identifies `evil.rm` and an out-of-array read, and rejects the
+fourth subpacket.
+
+AEmphasis contains another independent signed slice-product root. A valid
+unspecified 65,536-channel layout plus 65,536 explicitly configured graph
+threads dispatches job 32,768. Its first channel product is exactly
+2,147,483,648, which UBSan reports at `af_aemphasis.c:108`. With integer
+instrumentation removed, wrapping starts the slice at channel -32,768, and a
+poisoned-prefix replay makes ASan report the negative channel-pointer read.
+Exact repair `f7368f97b92a0afe8dc8368a4b6749704b740317` uses the int64-based
+`ff_slice_pos()` helper and completes the selected slice cleanly. This is a
+separate low-severity callback implementation despite sharing the repair with
+ColorChannelMixer and other slice fixes.
+
+Finally, RTMP's AMF size and content walkers recurse without a depth limit.
+Strict arrays can contain one nested value per five encoded bytes, so one
+million levels occupy 5,000,002 bytes and remain below RTMP's 24-bit packet
+size maximum. ASan reports stack overflow with repeated `amf_tag_skip` frames.
+The network protocol calls this walker for received invoke/status and metadata
+fields. Exact repair `92804c9e25623f2d5c5c8d64d4b0a538d1861cd7` caps both
+recursive walkers at depth 16, explicitly identifies out-of-array access, and
+makes the same value return -1 cleanly.
+
+The durable artifacts are the four matching C harnesses and runners under
+`evaluations/`: `ffmpeg_flanger_channel_phase_overflow`,
+`ffmpeg_cook_subpacket_channel_overread`,
+`ffmpeg_aemphasis_slice_overflow`, and `ffmpeg_rtmp_amf_recursion`. Their
+ignored reports pin commit `795bccdaf57772b1803914dee2f32d52776518e2` and all
+record `expected_observed=true`; three record clean exact-repair replays, while
+flanger records a clean guarded replay and an unchanged current-master sink.
+
+Terminal-ledger scoring recovers only the flanger phase overflow. The
+AEmphasis trajectory pursued a coefficient-denominator hypothesis rather than
+its slice arithmetic, COOK pursued bounded coupling tables rather than the
+cumulative channel guard, and RTMP pursued allocation/offset accounting rather
+than recursion. Recall is therefore 1/4 from terminal ledgers and 0/4 from
+formal findings.
+
+The remaining candidates close under exact bounds and ownership contracts.
+DSI CIN's allocation and write counts match; spherical metadata, G.729, SUP,
+and IVF enforce their relevant length domains. RTMP packet allocation and
+offset accounting are exact, COOK coupling tables match every accepted bit
+domain, VC-1 unescape cannot expand its output, and Dirac DWT retains `w+16`
+temporary padding. EXR receives positive even sizes, Lagarith reads remain
+inside mandatory packet padding, and libaribb24 enforces its output `ucount`.
+CBS fragments retain buffer references, packet-list move/get ownership is
+sound, and swresample rejects channel counts beyond its fixed capacity.
+
+The AEmphasis coefficient denominator remains positive over the valid formula
+domain. MIPS scantable and `os_support.h` historical changes repair output or
+return-value correctness, id RoQ's zero FPS affects format validity, and the
+x86 ME context pointer is an internal invariant. Perlin and RA144 yielded no
+viable memory-safety lead. The supplied H.264 slice counter, poisoned spare
+column, and `top_borders[-1]` trace is legitimate direct corroboration of the
+already retained `h264-slice-sentinel-collision` root and is not counted a
+second time.
+
+The four roots raise the totals to 162 confirmed root causes and 140
+dynamically reproduced issues. Historical coverage is 2,268/4,995 (45.41%),
+with 2,727 historically ranked files remaining.
+
+Direct deterministic regeneration reproduces ranks 2245–2268 exactly and
+seals ranks 2269–2292 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_2269_2292.json` with SHA-256
+`fcc66e5467a5284aa62ea11bc6f175b2be0e31679174e266088169712ce4f084`.

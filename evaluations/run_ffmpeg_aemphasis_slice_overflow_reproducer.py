@@ -1,0 +1,330 @@
+"""Build and record AEmphasis's overflowing channel-slice proof."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import platform
+import subprocess
+from datetime import datetime, timezone
+from pathlib import Path
+
+SCHEMA_VERSION = "cw.ffmpeg.aemphasis-slice-overflow-reproducer.v1"
+REPAIR_COMMIT = "f7368f97b92a0afe8dc8368a4b6749704b740317"
+
+
+def _arguments() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--checkout", type=Path, required=True)
+    parser.add_argument(
+        "--harness",
+        type=Path,
+        default=Path(__file__).with_name("ffmpeg_aemphasis_slice_overflow_reproducer.c"),
+    )
+    parser.add_argument("--binary-output", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    return parser.parse_args()
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(command, check=False, capture_output=True, text=True, **kwargs)
+
+
+def _failed(command: list[str], message: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(command, 127, "", message)
+
+
+def _compile_command(
+    *,
+    harness: Path,
+    source: Path,
+    binary: Path,
+    sanitizers: str,
+    guarded_replay: bool,
+) -> list[str]:
+    command = [
+        "clang",
+        "-I.",
+        "-I./libavfilter",
+        "-D_ISOC11_SOURCE",
+        "-D_FILE_OFFSET_BITS=64",
+        "-D_LARGEFILE_SOURCE",
+        "-I./compat/dispatch_semaphore",
+        "-DPIC",
+        "-I./compat/stdbit",
+        "-DHAVE_AV_CONFIG_H",
+        f'-DAEMPHASIS_SOURCE="{source}"',
+        f"-fsanitize={sanitizers}",
+    ]
+    if guarded_replay:
+        command.append("-DAEMPHASIS_GUARDED_REPLAY=1")
+    if "undefined" in sanitizers:
+        command.append("-fno-sanitize-recover=undefined")
+    command.extend(
+        [
+            "-fno-omit-frame-pointer",
+            "-fno-inline",
+            "-ffunction-sections",
+            "-fdata-sections",
+            "-g",
+            "-O1",
+            "-std=c17",
+            "-o",
+            str(binary),
+            str(harness),
+            "libavfilter/libavfilter.a",
+            "libavutil/libavutil.a",
+            "-lm",
+        ]
+    )
+    if platform.system() == "Darwin":
+        command.append("-Wl,-dead_strip")
+    else:
+        command.append("-Wl,--gc-sections")
+    command.append("-pthread")
+    return command
+
+
+def main() -> None:
+    args = _arguments()
+    checkout = args.checkout.expanduser().resolve()
+    harness = args.harness.expanduser().resolve()
+    binary = args.binary_output.expanduser().resolve()
+    output = args.output.expanduser().resolve()
+    source = checkout / "libavfilter/af_aemphasis.c"
+    filters_header = checkout / "libavfilter/filters.h"
+    graph_source = checkout / "libavfilter/avfiltergraph.c"
+    channel_layout_source = checkout / "libavutil/channel_layout.c"
+    required = (
+        harness,
+        source,
+        filters_header,
+        graph_source,
+        channel_layout_source,
+        checkout / "libavfilter/libavfilter.a",
+        checkout / "libavutil/libavutil.a",
+    )
+    if any(not path.is_file() for path in required):
+        raise ValueError("harness, exact filter sources, and configured archives must exist")
+
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    asan_binary = binary.with_name(binary.name + "-asan")
+    repaired_binary = binary.with_name(binary.name + "-repaired")
+    repaired_source = binary.with_name(binary.name + "-repaired-af_aemphasis.c")
+    repaired_filters = binary.with_name(binary.name + "-repaired-filters.h")
+    repair_source_result = _run(
+        ["git", "show", f"{REPAIR_COMMIT}:libavfilter/af_aemphasis.c"], cwd=checkout
+    )
+    repair_filters_result = _run(
+        ["git", "show", f"{REPAIR_COMMIT}:libavfilter/filters.h"], cwd=checkout
+    )
+    if repair_filters_result.returncode == 0:
+        repaired_filters.write_text(repair_filters_result.stdout, encoding="utf-8")
+    if repair_source_result.returncode == 0 and repaired_filters.is_file():
+        repaired_source.write_text(
+            repair_source_result.stdout.replace(
+                '#include "filters.h"', f'#include "{repaired_filters}"'
+            ),
+            encoding="utf-8",
+        )
+
+    compile_command = _compile_command(
+        harness=harness,
+        source=source,
+        binary=binary,
+        sanitizers="address,undefined",
+        guarded_replay=False,
+    )
+    asan_compile_command = _compile_command(
+        harness=harness,
+        source=source,
+        binary=asan_binary,
+        sanitizers="address",
+        guarded_replay=True,
+    )
+    repaired_compile_command = _compile_command(
+        harness=harness,
+        source=repaired_source,
+        binary=repaired_binary,
+        sanitizers="address,undefined",
+        guarded_replay=True,
+    )
+    compile_result = _run(compile_command, cwd=checkout)
+    asan_compile_result = _run(asan_compile_command, cwd=checkout)
+    repaired_compile_result = (
+        _run(repaired_compile_command, cwd=checkout)
+        if repaired_source.is_file() and repaired_filters.is_file()
+        else _failed(repaired_compile_command, "repair source extraction failed")
+    )
+
+    environment = os.environ.copy()
+    environment["ASAN_OPTIONS"] = "halt_on_error=1:abort_on_error=1:detect_leaks=0"
+    environment["UBSAN_OPTIONS"] = "halt_on_error=1:abort_on_error=1:print_stacktrace=1"
+    run_result = (
+        _run([str(binary)], cwd=checkout, env=environment)
+        if compile_result.returncode == 0
+        else _failed([str(binary)], "compile failed")
+    )
+    asan_run_result = (
+        _run([str(asan_binary)], cwd=checkout, env=environment)
+        if asan_compile_result.returncode == 0
+        else _failed([str(asan_binary)], "ASan compile failed")
+    )
+    repaired_run_result = (
+        _run([str(repaired_binary)], cwd=checkout, env=environment)
+        if repaired_compile_result.returncode == 0
+        else _failed([str(repaired_binary)], "repaired compile failed")
+    )
+
+    source_text = source.read_text(encoding="utf-8", errors="replace")
+    graph_text = graph_source.read_text(encoding="utf-8", errors="replace")
+    channel_layout_text = channel_layout_source.read_text(
+        encoding="utf-8", errors="replace"
+    )
+    repaired_filters_text = repaired_filters.read_text(encoding="utf-8", errors="replace")
+    repair_diff = _run(
+        ["git", "show", "--format=", REPAIR_COMMIT, "--", "libavfilter/af_aemphasis.c"],
+        cwd=checkout,
+    )
+    source_indicators = {
+        "unspecified_layout_accepts_selected_channel_count": (
+            "if (channel_layout->nb_channels <= 0)" in channel_layout_text
+            and "case AV_CHANNEL_ORDER_UNSPEC:\n        return 1;" in channel_layout_text
+        ),
+        "public_thread_option_accepts_selected_job_count": (
+            '"Maximum number of threads"' in graph_text and "0, INT_MAX" in graph_text
+        ),
+        "framework_caps_jobs_to_channels_and_configured_threads": (
+            "FFMIN(inlink->ch_layout.nb_channels, ff_filter_get_nb_threads(ctx))"
+            in source_text
+        ),
+        "callback_uses_unchecked_signed_int_products": (
+            "(in->ch_layout.nb_channels * jobnr) / nb_jobs" in source_text
+            and "(in->ch_layout.nb_channels * (jobnr+1)) / nb_jobs" in source_text
+        ),
+        "exact_repair_uses_int64_slice_helper": (
+            "return (int)((int64_t)total * jobnr / nb_jobs);"
+            in repaired_filters_text
+            and "ff_slice_pos(in->ch_layout.nb_channels, jobnr, nb_jobs)"
+            in repair_diff.stdout
+            and "ff_slice_pos(in->ch_layout.nb_channels, jobnr + 1, nb_jobs)"
+            in repair_diff.stdout
+        ),
+    }
+
+    combined = run_result.stdout + run_result.stderr
+    asan_combined = asan_run_result.stdout + asan_run_result.stderr
+    repaired_combined = repaired_run_result.stdout + repaired_run_result.stderr
+    runtime_indicators = {
+        "proof_inputs_match_public_domains": (
+            "channels=65536 explicit_threads=65536 jobnr=32768 "
+            "start_product=2147483648 end_product=2147549184" in combined
+        ),
+        "ubsan_reports_exact_start_product_overflow": (
+            "signed integer overflow: 65536 * 32768" in combined
+            and "libavfilter/af_aemphasis.c:108" in combined
+        ),
+        "ubsan_process_aborted": run_result.returncode != 0,
+        "asan_reports_negative_channel_pointer_read": (
+            "AddressSanitizer: use-after-poison" in asan_combined
+            and "READ of size 8" in asan_combined
+            and "filter_channels" in asan_combined
+        ),
+        "asan_process_aborted": asan_run_result.returncode != 0,
+        "repaired_slice_processes_selected_channel": (
+            repaired_run_result.returncode == 0
+            and "filter_result=0 sample=0" in repaired_combined
+            and "Sanitizer" not in repaired_combined
+            and "runtime error:" not in repaired_combined
+        ),
+    }
+    expected_observed = (
+        compile_result.returncode == 0
+        and asan_compile_result.returncode == 0
+        and repaired_compile_result.returncode == 0
+        and all(source_indicators.values())
+        and all(runtime_indicators.values())
+    )
+    head_result = _run(["git", "rev-parse", "HEAD"], cwd=checkout)
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "checkout": str(checkout),
+        "checkout_commit": head_result.stdout.strip() or None,
+        "repair_commit": REPAIR_COMMIT,
+        "harness": str(harness),
+        "harness_sha256": _sha256(harness),
+        "source_sha256": _sha256(source),
+        "binary": str(binary),
+        "binary_sha256": _sha256(binary) if binary.is_file() else None,
+        "asan_binary": str(asan_binary),
+        "asan_binary_sha256": _sha256(asan_binary) if asan_binary.is_file() else None,
+        "repaired_binary": str(repaired_binary),
+        "repaired_binary_sha256": (
+            _sha256(repaired_binary) if repaired_binary.is_file() else None
+        ),
+        "compile_command": compile_command,
+        "compile_returncode": compile_result.returncode,
+        "compile_stdout": compile_result.stdout,
+        "compile_stderr": compile_result.stderr,
+        "asan_compile_command": asan_compile_command,
+        "asan_compile_returncode": asan_compile_result.returncode,
+        "asan_compile_stdout": asan_compile_result.stdout,
+        "asan_compile_stderr": asan_compile_result.stderr,
+        "repaired_compile_command": repaired_compile_command,
+        "repaired_compile_returncode": repaired_compile_result.returncode,
+        "repaired_compile_stdout": repaired_compile_result.stdout,
+        "repaired_compile_stderr": repaired_compile_result.stderr,
+        "asan_options": environment["ASAN_OPTIONS"],
+        "ubsan_options": environment["UBSAN_OPTIONS"],
+        "source_indicators": source_indicators,
+        "runtime_indicators": runtime_indicators,
+        "expected_observed": expected_observed,
+        "scope": (
+            "AEmphasis partitions channels with signed-int channel-times-job "
+            "products. A valid unspecified 65,536-channel layout and 65,536 "
+            "explicit graph threads supply job 32,768, whose first product is "
+            "2,147,483,648. UBSan aborts at the exact callback expression; under "
+            "ordinary wrapping the slice starts at channel -32,768, and a "
+            "poisoned-prefix replay makes ASan report the pointer read. Exact "
+            "repair f7368f97b9 uses the int64-based ff_slice_pos helper, and the "
+            "same selected slice completes cleanly."
+        ),
+        "vulnerable_ubsan_run": {
+            "command": [str(binary)],
+            "returncode": run_result.returncode,
+            "stdout": run_result.stdout,
+            "stderr": run_result.stderr,
+        },
+        "vulnerable_asan_run": {
+            "command": [str(asan_binary)],
+            "returncode": asan_run_result.returncode,
+            "stdout": asan_run_result.stdout,
+            "stderr": asan_run_result.stderr,
+        },
+        "repaired_run": {
+            "command": [str(repaired_binary)],
+            "returncode": repaired_run_result.returncode,
+            "stdout": repaired_run_result.stdout,
+            "stderr": repaired_run_result.stderr,
+        },
+    }
+    temporary = output.with_suffix(output.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    temporary.replace(output)
+    print(output)
+    if not expected_observed:
+        raise SystemExit(1)
+
+
+if __name__ == "__main__":
+    main()

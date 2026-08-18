@@ -9430,5 +9430,306 @@
         "end": 157
       }
     ]
+  },
+  {
+    "case_id": "flanger-channel-phase-signed-overflow-oob-read",
+    "finding": {
+      "id": "ffmpeg-flanger-channel-phase-signed-overflow-oob-read",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-190",
+      "file": "libavfilter/af_flanger.c",
+      "line_number": 140,
+      "severity": "low",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The flanger filter accepts an unspecified 561-channel layout, 384-kHz audio, speed 0.1, and phase 100. Configuration creates a 3,840,000-entry LFO, then channel 560 makes the signed-int channel-times-length product 2,150,400,000 before conversion to double. UBSan aborts at the exact production expression. Ordinary two's-complement wrapping produces -2,144,567,296 and a remainder of -1,847,296, so the next lookup reads that many floats before the LFO. A poisoned-prefix replay makes ASan report the four-byte read, while a floating-point multiply and modulo guard completes the identical frame cleanly. Current master remains unchecked.",
+      "code_snippet": "int channel_phase = chan * s->lfo_length * s->channel_phase + .5; double delay = s->lfo[(s->lfo_pos + channel_phase) % s->lfo_length];",
+      "poc": "Run evaluations/run_ffmpeg_flanger_channel_phase_overflow_reproducer.py against the pinned configured tree. It records the exact signed overflow under UBSan, the negative pre-LFO lookup under ASan with a poisoned prefix, and a clean floating-point-modulo guarded replay.",
+      "discovered_by": "sourcehunt:terminal-ledger-plus-offline-proof",
+      "vulnerability_trace": {
+        "summary": "a valid large channel count and slow flanger sweep overflow the per-channel LFO phase product, making C remainder semantics preserve a negative index before the LFO allocation",
+        "steps": [
+          {
+            "file": "libavfilter/af_flanger.c",
+            "line": 60,
+            "function": "flanger_options",
+            "code_snippet": "{ \"speed\", ..., 0.1, 10, ... }; ... { \"phase\", ..., 0, 100, ... }",
+            "note": "The public filter domains accept speed 0.1 and phase 100; initialization normalizes the phase percentage to 1.0."
+          },
+          {
+            "file": "libavutil/channel_layout.c",
+            "line": 802,
+            "function": "av_channel_layout_check",
+            "code_snippet": "case AV_CHANNEL_ORDER_UNSPEC: return 1;",
+            "note": "An unspecified layout with 561 positive channels is valid and reaches filter configuration."
+          },
+          {
+            "file": "libavfilter/af_flanger.c",
+            "line": 97,
+            "function": "config_input",
+            "code_snippet": "s->lfo_length = inlink->sample_rate / s->speed;",
+            "note": "At 384 kHz and speed 0.1, the allocated LFO contains 3,840,000 float entries."
+          },
+          {
+            "file": "libavfilter/af_flanger.c",
+            "line": 140,
+            "function": "filter_frame",
+            "code_snippet": "int channel_phase = chan * s->lfo_length * s->channel_phase + .5;",
+            "note": "For channel 560 the first integer multiplication is 2,150,400,000. UBSan reports signed overflow before the result participates in floating-point multiplication."
+          },
+          {
+            "file": "libavfilter/af_flanger.c",
+            "line": 141,
+            "function": "filter_frame",
+            "code_snippet": "s->lfo[(s->lfo_pos + channel_phase) % s->lfo_length]",
+            "note": "The wrapped product has remainder -1,847,296 at initial lfo_pos zero. ASan reports the resulting four-byte poisoned-prefix read before the LFO."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/af_flanger.c",
+        "start": 55,
+        "end": 110
+      },
+      {
+        "path": "libavfilter/af_flanger.c",
+        "start": 112,
+        "end": 175
+      },
+      {
+        "path": "libavutil/channel_layout.c",
+        "start": 783,
+        "end": 806
+      }
+    ]
+  },
+  {
+    "case_id": "cook-cumulative-subpacket-channel-overread",
+    "finding": {
+      "id": "ffmpeg-cook-cumulative-subpacket-channel-overread",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavcodec/cook.c",
+      "line_number": 966,
+      "severity": "high",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "COOK initialization validates the current subpacket count plus each subpacket's channel count instead of the cumulative channel count. Four stereo subpackets therefore pass for a six-channel stream while describing eight channels. Frame decoding advances ch_idx by two for every accepted subpacket, and a deterministically valid fourth coded subpacket indexes output pointers 6 and 7 beyond the six-pointer frame array. ASan reports an eight-byte read immediately after that 48-byte allocation. Exact repair 1152139b4898888f7ca3daa1caca715c87dc1e85 tracks the cumulative channel total, explicitly names evil.rm and an out-of-array read, and rejects the fourth subpacket.",
+      "code_snippet": "if (q->num_subpackets + q->subpacket[s].num_channels > channels) ...; ... outbuffer ? outbuffer[p->ch_idx] : NULL",
+      "poc": "Run evaluations/run_ffmpeg_cook_subpacket_channel_overread_reproducer.py against the pinned configured tree. Four stereo extradata records pass vulnerable initialization for six output channels; packet fill 132 reaches channel index 6 and ASan reports the pointer-array overread. The exact repaired initializer accepts only the first three subpackets.",
+      "discovered_by": "sourcehunt:offline-repair-diff-plus-dynamic-proof",
+      "vulnerability_trace": {
+        "summary": "a non-cumulative COOK extradata guard accepts more subpacket channels than the output frame owns, and decoding reads the first missing channel pointer",
+        "steps": [
+          {
+            "file": "libavcodec/cook.c",
+            "line": 1151,
+            "function": "cook_decode_init",
+            "code_snippet": "case STEREO: ... q->subpacket[s].num_channels = 2;",
+            "note": "Each of the proof's four 16-byte stereo subpacket records claims two output channels."
+          },
+          {
+            "file": "libavcodec/cook.c",
+            "line": 1240,
+            "function": "cook_decode_init",
+            "code_snippet": "if (q->num_subpackets + q->subpacket[s].num_channels > channels)",
+            "note": "For six declared channels, the four checks are 0+2, 1+2, 2+2, and 3+2; all pass even though the cumulative total becomes eight."
+          },
+          {
+            "file": "libavcodec/cook.c",
+            "line": 1022,
+            "function": "cook_decode_frame",
+            "code_snippet": "q->subpacket[i].ch_idx = chidx; ... chidx += q->subpacket[i].num_channels;",
+            "note": "The decoder correctly accumulates the accepted channel claims, assigning the fourth stereo subpacket starting index six."
+          },
+          {
+            "file": "libavcodec/cook.c",
+            "line": 966,
+            "function": "decode_subpacket",
+            "code_snippet": "outbuffer ? outbuffer[p->ch_idx] : NULL",
+            "note": "A valid coded subpacket reaches output pointer index six. ASan reports an eight-byte read immediately after the six-pointer, 48-byte array."
+          },
+          {
+            "file": "libavcodec/cook.c",
+            "line": 1240,
+            "function": "later repair 1152139b48",
+            "code_snippet": "if (total_channels + q->subpacket[s].num_channels > channels) ...; total_channels += q->subpacket[s].num_channels;",
+            "note": "The exact repair retains a cumulative total and rejects the fourth stereo subpacket before decoder initialization completes."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/cook.c",
+        "start": 1075,
+        "end": 1260
+      },
+      {
+        "path": "libavcodec/cook.c",
+        "start": 941,
+        "end": 1033
+      }
+    ]
+  },
+  {
+    "case_id": "aemphasis-channel-slice-signed-overflow-oob-read",
+    "finding": {
+      "id": "ffmpeg-aemphasis-channel-slice-signed-overflow-oob-read",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-190",
+      "file": "libavfilter/af_aemphasis.c",
+      "line_number": 108,
+      "severity": "low",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "AEmphasis partitions channels with signed-int channel-times-job products. A valid unspecified 65,536-channel layout and 65,536 explicitly configured graph threads dispatch job 32,768, whose first product is exactly 2,147,483,648. UBSan aborts at the production callback expression. Under ordinary wrapping, the slice starts at channel -32,768, and a poisoned-prefix replay makes ASan report the eight-byte extended_data pointer read. Exact repair f7368f97b92a0afe8dc8368a4b6749704b740317 replaces both products with the int64-based ff_slice_pos helper and processes the selected slice cleanly. This is a separate low-severity callback root despite sharing the repair with other slice-overflow findings.",
+      "code_snippet": "const int start = (in->ch_layout.nb_channels * jobnr) / nb_jobs; const int end = (in->ch_layout.nb_channels * (jobnr+1)) / nb_jobs;",
+      "poc": "Run evaluations/run_ffmpeg_aemphasis_slice_overflow_reproducer.py against the pinned configured tree. It invokes job 32,768 of 65,536 for a 65,536-channel layout, records the exact signed overflow under UBSan and the negative pointer-array read under ASan, then verifies the exact ff_slice_pos repair.",
+      "discovered_by": "sourcehunt:offline-repair-diff-plus-dynamic-proof",
+      "vulnerability_trace": {
+        "summary": "an explicitly extreme graph thread count makes AEmphasis's channel-slice product overflow at an otherwise valid unspecified channel count and index extended_data before its allocation",
+        "steps": [
+          {
+            "file": "libavutil/channel_layout.c",
+            "line": 802,
+            "function": "av_channel_layout_check",
+            "code_snippet": "case AV_CHANNEL_ORDER_UNSPEC: return 1;",
+            "note": "The channel-layout API accepts the proof's 65,536 positive unspecified channels."
+          },
+          {
+            "file": "libavfilter/avfiltergraph.c",
+            "line": 52,
+            "function": "filtergraph_options",
+            "code_snippet": "{ \"threads\", \"Maximum number of threads\", ..., 0, INT_MAX, ... }",
+            "note": "The public graph option accepts 65,536 explicit filter threads."
+          },
+          {
+            "file": "libavfilter/af_aemphasis.c",
+            "line": 146,
+            "function": "filter_frame",
+            "code_snippet": "FFMIN(inlink->ch_layout.nb_channels, ff_filter_get_nb_threads(ctx))",
+            "note": "The framework caps jobs to both values, so equal 65,536-channel and thread counts still dispatch the selected job."
+          },
+          {
+            "file": "libavfilter/af_aemphasis.c",
+            "line": 108,
+            "function": "filter_channels",
+            "code_snippet": "const int start = (in->ch_layout.nb_channels * jobnr) / nb_jobs;",
+            "note": "For job 32,768, UBSan reports 65,536 times 32,768 overflowing signed int; two's-complement wrapping produces start -32,768."
+          },
+          {
+            "file": "libavfilter/af_aemphasis.c",
+            "line": 112,
+            "function": "filter_channels",
+            "code_snippet": "const double *src = (const double *)in->extended_data[ch];",
+            "note": "The negative slice starts before the channel-pointer array. ASan reports an eight-byte poisoned-prefix read; the exact ff_slice_pos repair completes cleanly."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/af_aemphasis.c",
+        "start": 96,
+        "end": 152
+      },
+      {
+        "path": "libavfilter/avfiltergraph.c",
+        "start": 44,
+        "end": 60
+      },
+      {
+        "path": "libavutil/channel_layout.c",
+        "start": 783,
+        "end": 806
+      },
+      {
+        "path": "libavfilter/filters.h",
+        "start": 745,
+        "end": 770
+      }
+    ]
+  },
+  {
+    "case_id": "rtmp-amf-unbounded-recursion-stack-overflow",
+    "finding": {
+      "id": "ffmpeg-rtmp-amf-unbounded-recursion-stack-overflow",
+      "finding_type": "denial_of_service",
+      "cwe": "CWE-674",
+      "file": "libavformat/rtmppkt.c",
+      "line_number": 482,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "RTMP AMF strict arrays can contain one nested value each, while the packet-size and content walkers recurse without a depth limit. One million nested single-element arrays encode to 5,000,002 bytes, below RTMP's 24-bit packet-size maximum. Passing that value through ff_amf_tag_size makes ASan report stack overflow with hundreds of repeated amf_tag_skip frames. The network protocol invokes this parser on received invoke/status and metadata fields. Exact repair 92804c9e25623f2d5c5c8d64d4b0a538d1861cd7 caps both recursive walkers at depth 16, explicitly identifies out-of-array access, and makes the same value return -1 cleanly.",
+      "code_snippet": "case AMF_DATA_TYPE_ARRAY: nb = bytestream2_get_be32(gb); ... t = amf_tag_skip(gb);",
+      "poc": "Run evaluations/run_ffmpeg_rtmp_amf_recursion_reproducer.py against the pinned configured tree. It builds one million nested AMF strict arrays in a 5,000,002-byte value; ASan reports stack overflow in repeated amf_tag_skip frames, and the exact depth-16 repair rejects it with tag_size_result=-1.",
+      "discovered_by": "sourcehunt:offline-repair-diff-plus-dynamic-proof",
+      "vulnerability_trace": {
+        "summary": "a received RTMP AMF value can encode enough nested strict arrays within the protocol packet limit to exhaust the parser stack before byte bounds stop recursion",
+        "steps": [
+          {
+            "file": "libavformat/rtmppkt.c",
+            "line": 212,
+            "function": "rtmp_packet_read_one_chunk",
+            "code_snippet": "size = AV_RB24(buf);",
+            "note": "The wire protocol admits packet bodies up to 16,777,215 bytes; the proof's 5,000,002-byte AMF value fits."
+          },
+          {
+            "file": "libavformat/rtmpproto.c",
+            "line": 2209,
+            "function": "handle_invoke_status",
+            "code_snippet": "t = ff_amf_tag_size(ptr, data_end);",
+            "note": "Received RTMP invoke/status handling calls the recursive size walker; metadata parsing calls the same API at line 2346."
+          },
+          {
+            "file": "libavformat/rtmppkt.c",
+            "line": 466,
+            "function": "amf_tag_skip",
+            "code_snippet": "case AMF_DATA_TYPE_ARRAY: ... nb = bytestream2_get_be32(gb);",
+            "note": "Each strict-array marker plus four-byte count can declare exactly one nested value, allowing one recursion level per five input bytes."
+          },
+          {
+            "file": "libavformat/rtmppkt.c",
+            "line": 482,
+            "function": "amf_tag_skip",
+            "code_snippet": "t = amf_tag_skip(gb);",
+            "note": "No depth state is carried. ASan reports stack overflow with repeated frames while parsing one million nested arrays."
+          },
+          {
+            "file": "libavformat/rtmppkt.c",
+            "line": 439,
+            "function": "later repair 92804c9e25",
+            "code_snippet": "static int amf_tag_skip(GetByteContext *gb, int depth); ... if (depth > MAX_DEPTH) return AVERROR_PATCHWELCOME;",
+            "note": "The exact repair caps both amf_tag_skip and the parallel amf_tag_contents walker at depth 16; repaired replay returns -1 without sanitizer output."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/rtmppkt.c",
+        "start": 180,
+        "end": 292
+      },
+      {
+        "path": "libavformat/rtmppkt.c",
+        "start": 439,
+        "end": 570
+      },
+      {
+        "path": "libavformat/rtmpproto.c",
+        "start": 2200,
+        "end": 2230
+      },
+      {
+        "path": "libavformat/rtmpproto.c",
+        "start": 2328,
+        "end": 2350
+      }
+    ]
   }
 ]
