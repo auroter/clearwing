@@ -4452,3 +4452,49 @@ Direct deterministic regeneration reproduces ranks 1741–1764 exactly and seals
 ranks 1765–1788 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1765_1788.json` with SHA-256
 `9a03c6f55d48748269920484c54cfc14d958bfd3943b1d81233a9cf932cd44e5`.
+
+### Blind wave 1765–1788
+
+The wave completed source-bearing work on all 24 exact paths in one pinned
+session. It settled 914 model calls using 8,680,882 input tokens and 200,989
+output tokens, 8,881,871 total, and made 249 raw candidate/finding calls. It
+submitted one unverified formal finding.
+
+The formal LZW stack-overflow report is false. Every dictionary prefix names a
+strictly earlier, smaller code, so the prefix graph is acyclic and a single
+expansion is bounded by the 4,096-code table. The decoder drains `sp` before it
+reads the next code, and the `code == slot` special-case byte plus the preceding
+code chain still fit the 4,096-byte stack. Writes from separate input codes do
+not accumulate in the stack as the report claimed.
+
+The remaining transient leads close under concrete bounds and contracts. The
+UTF-8 helper reaches the terminating NUL before attempting another continuation
+read; FSPP callers provide the even counts consumed by its two-unit loop; and
+MSVCRT and RTSP formatting overflow candidates become rejected huge
+allocations, not small writable buffers. BIT reads at most 160 bytes from its
+164-byte buffer, RTMP-DH's secret buffer matches the fixed modulus, DTS tail
+access stays in mandatory probe padding, EVC tile/reference arrays are bounded,
+and the AAC-PS tables contain all 276 consumed entries.
+
+Filter, library, and architecture-specific leads also close. BWDIF's vertical
+references inherit caller edge/interior-row selection, SILENCEREMOVE cannot
+prove output beyond input plus retained-silence storage, LibGME receives zero
+input with an explicit zero length, and RSD's `INT_MAX / 36` channel bound keeps
+`8 * channels` representable. Mastering-display helpers allocate exactly the
+struct size and every reviewed decoder wrapper writes only declared fields.
+RepeatFields copies the configured minimum row width from valid frames whose
+strides cover that width. ARM and AArch64 resamplers normalize the phase index
+below `phase_count` before indexing a bank allocated for `phase_count + 1`
+filters. RTP MPEG-video's two tail bytes lie in mandatory packet padding after
+a complete picture start code. AIX's zero sample rate produces an ignored
+invalid timebase and is guarded by later audio-rate checks, not a division by
+zero.
+
+No new root survives adjudication, so totals remain 127 confirmed root causes
+and 110 dynamically reproduced issues. Historical coverage is 1,788/4,995
+(35.80%), with 3,207 historically ranked files remaining.
+
+Direct deterministic regeneration reproduces ranks 1765–1788 exactly and seals
+ranks 1789–1812 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1789_1812.json` with SHA-256
+`e839ccaf9e4e6f3b4470eb0d5fb8ef5112dc2d5c041031e90a79e548d45f6bf3`.
