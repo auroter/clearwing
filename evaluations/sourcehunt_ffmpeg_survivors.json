@@ -5970,5 +5970,497 @@
         "end": 164
       }
     ]
+  },
+  {
+    "case_id": "ogg-celt-unbounded-extra-headers-streaming-livelock",
+    "finding": {
+      "id": "ffmpeg-ogg-celt-unbounded-extra-headers-streaming-livelock",
+      "finding_type": "denial_of_service",
+      "cwe": "CWE-400",
+      "file": "libavformat/oggparsecelt.c",
+      "line_number": 77,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The Ogg/CELT identification header supplies an unchecked uint32 extra_headers count that is converted to signed int after adding one. The public value 0x7FFFFFFE derives INT_MAX pending headers. Every following Ogg page is treated as another header, decrements the count only once, and returns header status, so a streaming peer can keep the demuxer consuming pages instead of reaching media for effectively the lifetime of the connection. A bounded public custom-AVIO proof supplies 4,096 valid repeated pages and confirms that all are consumed before its reader injects EIO. Exact later repair 87439ed619 rejects counts above 16 and explicitly identifies the effectively infinite loop.",
+      "code_snippet": "extra_headers = AV_RL32(p + 56); ... priv->extra_headers_left = 1 + extra_headers; ... priv->extra_headers_left--; return 1;",
+      "poc": "Run evaluations/run_ffmpeg_ogg_celt_extra_headers_livelock_reproducer.py against the configured pinned tree. Its ignored report records the derived INT_MAX count, all 4,096 bounded pages consumed, termination only at injected EIO, and expected_observed=true.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "an attacker-controlled CELT header count converts every later streaming Ogg page into a header for an effectively unbounded duration",
+        "steps": [
+          {
+            "file": "libavformat/oggparsecelt.c",
+            "line": 64,
+            "function": "celt_header",
+            "code_snippet": "extra_headers = AV_RL32(p + 56);",
+            "note": "The 32-bit count is read directly from the public CELT identification packet without a semantic cap."
+          },
+          {
+            "file": "libavformat/oggparsecelt.c",
+            "line": 77,
+            "function": "celt_header",
+            "code_snippet": "priv->extra_headers_left = 1 + extra_headers;",
+            "note": "extra_headers=0x7FFFFFFE produces the maximum signed count, 2,147,483,647."
+          },
+          {
+            "file": "libavformat/oggparsecelt.c",
+            "line": 82,
+            "function": "celt_header",
+            "code_snippet": "else if (priv && priv->extra_headers_left)",
+            "note": "Every subsequent page remains classified as a header while the enormous counter is nonzero."
+          },
+          {
+            "file": "libavformat/oggparsecelt.c",
+            "line": 86,
+            "function": "celt_header",
+            "code_snippet": "priv->extra_headers_left--; return 1;",
+            "note": "Progress is only one count per page; the proof consumes all 4,096 supplied pages and exits solely when the bounded reader fails."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/oggparsecelt.c",
+        "start": 35,
+        "end": 90
+      }
+    ]
+  },
+  {
+    "case_id": "colorlevels-planar-auto-range-plane-offset-oob-read",
+    "finding": {
+      "id": "ffmpeg-colorlevels-planar-auto-range-plane-offset-oob-read",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavfilter/vf_colorlevels.c",
+      "line_number": 438,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "colorlevels correctly maps planar RGB processing rows to separate data planes, but its automatic input-range scans always begin at data[0] and reuse the packed-RGBA component index as an in-plane byte offset. On GBRP, the red index is two. A uniquely owned public 4x4 frame with exact 16-byte planes and rimin=-1 therefore scans the green allocation at x+2 through the last visible row. ASan reports a one-byte heap read immediately after the complete 16-byte plane.",
+      "code_snippet": "const uint8_t offset = s->rgba_map[i]; const uint8_t *srcrow = in->data[0]; ... imin = FFMIN(imin, src[x + offset]);",
+      "poc": "Run evaluations/run_ffmpeg_colorlevels_planar_auto_range_reproducer.py against the configured sanitizer build. Its ignored report records the public tight GBRP frame, red-plane offset two applied to plane zero, one-byte ASan over-read, and expected_observed=true.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a planar component number is used as a packed byte offset into plane zero, carrying the final auto-range scan beyond an exact public frame plane",
+        "steps": [
+          {
+            "file": "libavfilter/vf_colorlevels.c",
+            "line": 332,
+            "function": "config_input",
+            "code_snippet": "ff_fill_rgba_map(s->rgba_map, inlink->format);",
+            "note": "For GBRP the public pixel-format map assigns red to plane/component index two."
+          },
+          {
+            "file": "libavfilter/vf_colorlevels.c",
+            "line": 401,
+            "function": "filter_frame",
+            "code_snippet": "td.srcrow[R] = in->data[2];",
+            "note": "The ordinary planar processing path correctly treats red as a separate plane, confirming the map's planar meaning."
+          },
+          {
+            "file": "libavfilter/vf_colorlevels.c",
+            "line": 425,
+            "function": "filter_frame",
+            "code_snippet": "const uint8_t *srcrow = in->data[0];",
+            "note": "The automatic scan instead starts every component at the first plane."
+          },
+          {
+            "file": "libavfilter/vf_colorlevels.c",
+            "line": 438,
+            "function": "filter_frame",
+            "code_snippet": "imin = FFMIN(imin, src[x + offset]);",
+            "note": "The red offset two carries the last-row read beyond the exact 16-byte green-plane allocation; ASan aborts."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/vf_colorlevels.c",
+        "start": 319,
+        "end": 459
+      },
+      {
+        "path": "libavfilter/buffersrc.c",
+        "start": 220,
+        "end": 268
+      }
+    ]
+  },
+  {
+    "case_id": "img2-split-planes-total-size-overflow-oob-read",
+    "finding": {
+      "id": "ffmpeg-img2-split-planes-total-size-overflow-oob-read",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavformat/img2enc.c",
+      "line_number": 220,
+      "severity": "high",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The image2 split-plane muxer stores Y and chroma plane products in signed int and adds them in signed int for its packet-size guard. A public 46,340x46,340 YUV420P stream has individually representable plane sizes but a true total of 3,221,093,400 bytes. The guard overflows negative and accepts a valid one-byte padded packet, then passes its 2,147,395,600-byte Y size to output. UBSan records the signed overflow and production avio_write immediately reads 4,096 bytes beyond the packet plus mandatory padding under ASan.",
+      "code_snippet": "int ysize = par->width * par->height; int usize = ...; if (ysize + 2*usize ... > pkt->size) ... write_and_close(..., pkt->data, ysize);",
+      "poc": "Run evaluations/run_ffmpeg_img2_split_planes_size_overflow_reproducer.py against the configured sanitizer build. Its ignored report records the public geometry, true total, wrapped guard, production AVIO over-read, and expected_observed=true.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "signed addition wraps the new split-plane packet guard, so tiny public packet storage is exported as a multi-gigabyte plane",
+        "steps": [
+          {
+            "file": "libavformat/img2enc.c",
+            "line": 214,
+            "function": "write_packet",
+            "code_snippet": "int ysize = par->width * par->height;",
+            "note": "The proof dimensions derive a positive 2,147,395,600-byte Y plane that still fits signed int."
+          },
+          {
+            "file": "libavformat/img2enc.c",
+            "line": 215,
+            "function": "write_packet",
+            "code_snippet": "int usize = AV_CEIL_RSHIFT(par->width, ...) * AV_CEIL_RSHIFT(par->height, ...);",
+            "note": "Each chroma plane is 536,848,900 bytes, also individually representable."
+          },
+          {
+            "file": "libavformat/img2enc.c",
+            "line": 220,
+            "function": "write_packet",
+            "code_snippet": "if (ysize + 2*usize + ... > pkt->size)",
+            "note": "The true 3,221,093,400-byte total overflows signed int; UBSan records the failed guard arithmetic."
+          },
+          {
+            "file": "libavformat/img2enc.c",
+            "line": 225,
+            "function": "write_packet",
+            "code_snippet": "write_and_close(s, &pb[0], pkt->data, ysize)",
+            "note": "The production AVIO path copies its first 4,096-byte block beyond the valid one-byte packet and 64-byte padding; ASan aborts."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/img2enc.c",
+        "start": 180,
+        "end": 237
+      }
+    ]
+  },
+  {
+    "case_id": "colorspace-cuda-rounded-grid-source-overread",
+    "finding": {
+      "id": "ffmpeg-colorspace-cuda-rounded-grid-source-overread",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavfilter/vf_colorspace_cuda.cu",
+      "line_number": 58,
+      "severity": "high",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "colorspace_cuda rounds every plane launch up to complete 32x16 blocks, while both conversion kernels receive no width or height and unconditionally read every launched coordinate. A public 32x1 YUV444P CUDA input has three one-row planes in one exact 3*pitch allocation. The luma launch alone reads through 15*pitch+31, beyond all three input planes for every pitch at least 32. With normalized pitch 32, the allocation is 96 bytes and the final luma read is offset 511, an over-read of 416 bytes. The separate output is height-aligned to 32 rows, so the source read is the vulnerable side. No CUDA runtime was available locally.",
+      "code_snippet": "cuLaunchKernel(... DIV_UP(width, BLOCKX), DIV_UP(height, BLOCKY), ...); ... src_ = static_cast<int>(src[x + y * pitch]) << 7;",
+      "poc": "Run evaluations/run_ffmpeg_colorspace_cuda_grid_proof.py against the pinned checkout. It validates the host, kernel, allocator, and image-size source indicators and records the exact normalized source over-read geometry with expected_observed=true.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "rounded 32x16 CUDA launches read well beyond an exact short input allocation because the kernel has no plane-dimension bounds",
+        "steps": [
+          {
+            "file": "libavutil/hwcontext_cuda.c",
+            "line": 178,
+            "function": "cuda_frames_init",
+            "code_snippet": "av_image_get_buffer_size(ctx->sw_format, ctx->width, ctx->height, priv->tex_alignment)",
+            "note": "A public 32x1 YUV444P input frames context allocates exactly three pitch-sized rows."
+          },
+          {
+            "file": "libavfilter/vf_colorspace_cuda.c",
+            "line": 282,
+            "function": "conv_cuda_convert",
+            "code_snippet": "case AV_PIX_FMT_YUV444P: break;",
+            "note": "All three YUV444P planes retain the full public width and one-row height."
+          },
+          {
+            "file": "libavfilter/vf_colorspace_cuda.c",
+            "line": 304,
+            "function": "conv_cuda_convert",
+            "code_snippet": "cuLaunchKernel(... DIV_UP(width, BLOCKX), DIV_UP(height, BLOCKY), 1, BLOCKX, BLOCKY, 1, ...)",
+            "note": "Height one schedules a complete sixteen-row block."
+          },
+          {
+            "file": "libavfilter/vf_colorspace_cuda.cu",
+            "line": 58,
+            "function": "to_jpeg_cuda",
+            "code_snippet": "src_ = static_cast<int>(src[x + y * pitch]) << 7;",
+            "note": "No dimension check gates thread (31,15); its normalized luma read at offset 511 lies 416 bytes beyond the complete 96-byte input allocation."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/vf_colorspace_cuda.c",
+        "start": 104,
+        "end": 122
+      },
+      {
+        "path": "libavfilter/vf_colorspace_cuda.c",
+        "start": 265,
+        "end": 313
+      },
+      {
+        "path": "libavfilter/vf_colorspace_cuda.cu",
+        "start": 40,
+        "end": 92
+      },
+      {
+        "path": "libavutil/hwcontext_cuda.c",
+        "start": 169,
+        "end": 215
+      }
+    ]
+  },
+  {
+    "case_id": "chromanr-16bit-neighborhood-accumulator-overflow",
+    "finding": {
+      "id": "ffmpeg-chromanr-16bit-neighborhood-accumulator-overflow",
+      "finding_type": "integer_overflow",
+      "cwe": "CWE-190",
+      "file": "libavfilter/vf_chromanr.c",
+      "line_number": 159,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "chromanr accepts 16-bit YUV444 frames and public horizontal and vertical patch radii up to 100, but its 16-bit Manhattan specialization accumulates neighbor U and V samples in signed int. A 201x201 frame whose samples are all UINT16_MAX makes the center include 40,401 matching neighbors plus the initial sample. The mathematical accumulator is 2,647,745,070. UBSan aborts in the production manhattan_slice16 function when su crosses INT_MAX; an ordinary release build relies on undefined signed-overflow behavior and produces corrupted filtering arithmetic.",
+      "code_snippet": "int su = cu; int sv = cv; ... su += U; sv += V; cn++;",
+      "poc": "Run evaluations/run_ffmpeg_chromanr_accumulator_overflow_reproducer.py against the configured sanitizer build. Its ignored report records the accepted filter graph, exact mathematical sum, UBSan overflow in manhattan_slice16, and expected_observed=true.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "maximum accepted patch geometry lets equal 16-bit samples overflow chromanr's signed neighborhood accumulators",
+        "steps": [
+          {
+            "file": "libavfilter/vf_chromanr.c",
+            "line": 133,
+            "function": "manhattan_slice16",
+            "code_snippet": "for (int x = 0; x < w; x++)",
+            "note": "A public 201x201 YUV444P16 frame reaches a center pixel with the full configured radius in every direction."
+          },
+          {
+            "file": "libavfilter/vf_chromanr.c",
+            "line": 139,
+            "function": "manhattan_slice16",
+            "code_snippet": "int su = cu; int sv = cv; int cn = 1;",
+            "note": "The 16-bit specialization starts its sums in 32-bit signed integers."
+          },
+          {
+            "file": "libavfilter/vf_chromanr.c",
+            "line": 148,
+            "function": "manhattan_slice16",
+            "code_snippet": "for (int xx = xxstart; xx <= xxstop; xx += stepw)",
+            "note": "Maximum public radii and unit steps visit all 40,401 neighbors at the center."
+          },
+          {
+            "file": "libavfilter/vf_chromanr.c",
+            "line": 159,
+            "function": "manhattan_slice16",
+            "code_snippet": "su += U; sv += V;",
+            "note": "Equal UINT16_MAX samples all pass the threshold; UBSan reports 2,147,450,880 + 65,535 overflowing signed int."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/vf_chromanr.c",
+        "start": 76,
+        "end": 191
+      },
+      {
+        "path": "libavfilter/vf_chromanr.c",
+        "start": 242,
+        "end": 279
+      }
+    ]
+  },
+  {
+    "case_id": "noise-bsf-negative-fractional-drop-divzero",
+    "finding": {
+      "id": "ffmpeg-noise-bsf-negative-fractional-drop-divzero",
+      "finding_type": "denial_of_service",
+      "cwe": "CWE-369",
+      "file": "libavcodec/bsf/noise.c",
+      "line_number": 164,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The noise bitstream filter accepts an arbitrary public drop expression. It interprets a negative result as a random drop period by casting the result to int, taking its absolute value, and using it directly as a modulo divisor. Any negative fractional value greater than -1 narrows to zero. A valid one-byte MPEG-2 packet with drop=-0.5 therefore reaches unsigned_state % 0 in the production BSF, and UBSan aborts on division by zero.",
+      "code_snippet": "else if (res < 0) drop = !(s->state % FFABS((int)res));",
+      "poc": "Run evaluations/run_ffmpeg_noise_fractional_drop_divzero_reproducer.py against the configured sanitizer build. Its ignored report records the public expression and packet, zero integer period, UBSan division by zero in noise, and expected_observed=true.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a permitted negative fractional drop expression becomes integer zero and is immediately used as noise BSF's modulo divisor",
+        "steps": [
+          {
+            "file": "libavcodec/bsf/noise.c",
+            "line": 106,
+            "function": "noise_init",
+            "code_snippet": "av_expr_parse(&s->drop_pexpr, s->drop_str, ...)",
+            "note": "The public string option is accepted as an arbitrary FFmpeg expression."
+          },
+          {
+            "file": "libavcodec/bsf/noise.c",
+            "line": 159,
+            "function": "noise",
+            "code_snippet": "res = av_expr_eval(s->drop_pexpr, s->var_values, NULL);",
+            "note": "The proof evaluates the configured expression to exactly -0.5 for its valid packet."
+          },
+          {
+            "file": "libavcodec/bsf/noise.c",
+            "line": 164,
+            "function": "noise",
+            "code_snippet": "drop = !(s->state % FFABS((int)res));",
+            "note": "Casting -0.5 yields zero; the resulting modulo-by-zero makes UBSan abort in the production filter."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/bsf/noise.c",
+        "start": 78,
+        "end": 198
+      },
+      {
+        "path": "libavcodec/bsf/noise.c",
+        "start": 210,
+        "end": 233
+      }
+    ]
+  },
+  {
+    "case_id": "swresample-s32-output-bits-negative-shift",
+    "finding": {
+      "id": "ffmpeg-swresample-s32-output-bits-negative-shift",
+      "finding_type": "denial_of_service",
+      "cwe": "CWE-758",
+      "file": "libswresample/dither.c",
+      "line_number": 104,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "swresample's public output_sample_bits option accepts values from zero through 64 independently of output format. During every S32 initialization with a nonzero value, dither setup computes 1 << (32 - output_sample_bits) without validating the exponent. A public mono S32-to-S32 context with the accepted value 33 therefore shifts by -1 during swr_init. UBSan aborts in swri_dither_init before conversion begins; ordinary builds rely on undefined shift behavior.",
+      "code_snippet": "if (out_fmt == AV_SAMPLE_FMT_S32 && s->dither.output_sample_bits) scale *= 1<<(32-s->dither.output_sample_bits);",
+      "poc": "Run evaluations/run_ffmpeg_swr_output_bits_negative_shift_reproducer.py against the configured sanitizer build. Its ignored report records the accepted option range, public S32 resampler, negative exponent, UBSan abort, and expected_observed=true.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "an option value explicitly accepted for the public resampler becomes a negative S32 dither shift exponent",
+        "steps": [
+          {
+            "file": "libswresample/options.c",
+            "line": 125,
+            "function": "options",
+            "code_snippet": "{ \"output_sample_bits\", ..., AV_OPT_TYPE_INT, ..., 0, 64, PARAM }",
+            "note": "The public option accepts 33 without reference to the selected 32-bit output format."
+          },
+          {
+            "file": "libswresample/swresample.c",
+            "line": 343,
+            "function": "swr_init",
+            "code_snippet": "swri_dither_init(s, s->out_sample_fmt, s->int_sample_fmt)",
+            "note": "Public context initialization unconditionally reaches dither setup."
+          },
+          {
+            "file": "libswresample/dither.c",
+            "line": 104,
+            "function": "swri_dither_init",
+            "code_snippet": "scale *= 1<<(32-s->dither.output_sample_bits);",
+            "note": "For accepted value 33 the exponent is -1; UBSan aborts through public swr_init."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libswresample/options.c",
+        "start": 110,
+        "end": 126
+      },
+      {
+        "path": "libswresample/dither.c",
+        "start": 80,
+        "end": 132
+      },
+      {
+        "path": "libswresample/swresample.c",
+        "start": 337,
+        "end": 349
+      }
+    ]
+  },
+  {
+    "case_id": "encryption-init-zero-key-size-null-pointer-ub",
+    "finding": {
+      "id": "ffmpeg-encryption-init-zero-key-size-null-pointer-ub",
+      "finding_type": "null_pointer_dereference",
+      "cwe": "CWE-476",
+      "file": "libavutil/encryption_info.c",
+      "line_number": 280,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The public encryption-init side-data parser accepts a nonzero key-ID count together with key_id_size zero. The shared allocator deliberately skips the key_ids pointer-array allocation whenever key_id_size is zero, and its validation also permits that combination. The parser nevertheless loops over num_key_ids and evaluates key_ids[j] as the destination of a zero-byte copy. A complete 20-byte public side-data object declaring one zero-sized key ID makes UBSan abort for applying zero offset to a null pointer in av_encryption_init_info_get_side_data; cleanup contains the same absent-array indexing invariant.",
+      "code_snippet": "info->key_ids = key_id_size ? av_calloc(...) : NULL; ... for (j = 0; j < num_key_ids; j++) memcpy(info->key_ids[j], side_data, key_id_size);",
+      "poc": "Run evaluations/run_ffmpeg_encryption_init_zero_key_size_reproducer.py against the configured sanitizer build. Its ignored report records the complete 20-byte public side data, accepted count/zero-size combination, null-pointer UBSan abort in the parser, and expected_observed=true.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a self-consistently sized encryption-init record declares one zero-sized key ID, leaving no pointer array for the parser's mandatory indexed copy",
+        "steps": [
+          {
+            "file": "libavutil/encryption_info.c",
+            "line": 190,
+            "function": "av_encryption_init_info_alloc",
+            "code_snippet": "info->key_ids = key_id_size ? av_calloc(num_key_ids, sizeof(*info->key_ids)) : NULL;",
+            "note": "key_id_size zero leaves key_ids null even when the declared count is one."
+          },
+          {
+            "file": "libavutil/encryption_info.c",
+            "line": 197,
+            "function": "av_encryption_init_info_alloc",
+            "code_snippet": "(!info->key_ids && num_key_ids && key_id_size)",
+            "note": "The allocation validation explicitly accepts the combination because key_id_size is zero."
+          },
+          {
+            "file": "libavutil/encryption_info.c",
+            "line": 264,
+            "function": "av_encryption_init_info_get_side_data",
+            "code_snippet": "av_encryption_init_info_alloc(system_id_size, num_key_ids, key_id_size, data_size)",
+            "note": "The complete 20-byte public record passes all preceding size checks and returns the malformed allocation."
+          },
+          {
+            "file": "libavutil/encryption_info.c",
+            "line": 280,
+            "function": "av_encryption_init_info_get_side_data",
+            "code_snippet": "memcpy(info->key_ids[j], side_data, key_id_size);",
+            "note": "The first loop iteration indexes the absent array even for a zero-byte copy; UBSan aborts on the null pointer."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavutil/encryption_info.c",
+        "start": 178,
+        "end": 228
+      },
+      {
+        "path": "libavutil/encryption_info.c",
+        "start": 231,
+        "end": 289
+      },
+      {
+        "path": "libavutil/encryption_info.h",
+        "start": 83,
+        "end": 123
+      }
+    ]
   }
 ]

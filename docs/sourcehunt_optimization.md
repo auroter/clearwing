@@ -4076,3 +4076,102 @@ Direct deterministic regeneration reproduces ranks 1621–1644 exactly and seals
 ranks 1645–1668 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1645_1668.json` with SHA-256
 `f20f5239ff8e8e9b62c67e07571a534650f6e4107dba417f99669fecd4e89369`.
+
+### Blind wave 1645–1668 and eight confirmed roots
+
+The wave completed source-bearing work on all 24 exact paths in one pinned
+session. It settled 951 model calls using 9,058,672 input tokens and 186,080
+output tokens, 9,244,752 total, and made 242 raw candidate/finding calls. The
+online scaffold retained one formal `noise.c` finding, but its proposed sink is
+false: `amount &&` excludes a zero divisor and ordinary negative integer
+divisors are defined. Offline invariant review rejected that formulation and
+recovered eight distinct roots, including a different, dynamically reproduced
+division-by-zero path in the same file.
+
+Ogg/CELT accepts an unchecked 32-bit extra-header count. The public value
+`0x7FFFFFFE` derives `INT_MAX` pending headers, and every following Ogg page is
+consumed as another header. A bounded custom-AVIO proof supplies 4,096 valid
+repeated pages and confirms that all are consumed before its reader injects
+EIO. Exact later repair `87439ed619` caps the count at 16 and explicitly
+identifies the effectively infinite streaming loop.
+
+Colorlevels maps planar RGB work to separate data planes but starts every
+automatic-range scan at `data[0]` and reuses the packed component index as an
+in-plane byte offset. A uniquely owned public 4x4 GBRP frame with exact 16-byte
+planes and red auto-minimum scanning therefore reads the green allocation at
+offset two through its final row. ASan reports the one-byte read immediately
+after that complete plane.
+
+Image2's split-plane muxer stores each plane product and their sum in signed
+`int`. Public 46,340x46,340 YUV420P geometry has individually representable
+plane sizes but a true total of 3,221,093,400 bytes. The guard overflows
+negative and accepts a valid one-byte padded packet; UBSan records the signed
+overflow and production `avio_write` immediately makes ASan report a 4,096-byte
+read beyond the packet and its mandatory padding.
+
+Colorspace CUDA rounds every plane launch to complete 32x16 blocks, while its
+conversion kernels receive no visible width or height and read every launched
+coordinate. A public 32x1 YUV444P CUDA input has three one-row planes in an
+exact `3*pitch` allocation. With normalized pitch 32, the luma launch reads
+through offset 511 of a 96-byte input allocation; the independently allocated
+output is height-aligned and covers the writes. The geometry and source path
+are exact, but no CUDA runtime was available for a sanitizer replay.
+
+Chromanr accepts 16-bit YUV444 frames and horizontal and vertical radii through
+100, but its 16-bit Manhattan specialization accumulates matching U and V
+samples in signed `int`. A uniform 201x201 public frame produces a mathematical
+sum of 2,647,745,070 at its center, and UBSan aborts in production
+`manhattan_slice16` when the accumulator crosses `INT_MAX`.
+
+The noise bitstream filter's `drop` expression treats negative results as a
+random drop period by narrowing to `int`, negating, and using the value as a
+modulo divisor. Any negative fraction greater than -1 narrows to zero. A valid
+one-byte MPEG-2 packet with public `drop=-0.5` reaches unsigned-state modulo
+zero in production and UBSan aborts.
+
+Swresample exposes `output_sample_bits` from zero through 64 independently of
+output format. S32 initialization with the accepted value 33 evaluates
+`1 << (32 - output_sample_bits)`. A public mono S32-to-S32 context reaches the
+negative shift during `swr_init`, where UBSan aborts before conversion.
+
+Finally, the public encryption-init side-data parser accepts a nonzero key-ID
+count with `key_id_size == 0`. The allocator deliberately omits the `key_ids`
+pointer array in that case, but parsing and cleanup still index it. A complete
+20-byte side-data object declaring one zero-sized ID makes UBSan abort for
+zero-offset arithmetic on the null pointer in
+`av_encryption_init_info_get_side_data`.
+
+The durable recorders and matching C harnesses cover Ogg/CELT, colorlevels,
+image2, chromanr, noise, swresample, and encryption-init; the CUDA case has a
+deterministic source-and-geometry proof. Their ignored reports under
+`results/sourcehunt-optimization/` all pin commit
+`795bccdaf57772b1803914dee2f32d52776518e2` and record
+`expected_observed=true`.
+
+The remaining leads close under concrete contracts. The ARM VC-1 helper returns
+the remaining byte count, so its wrapper's derived skip never exceeds input;
+bounded CBS getters contain short HEVC configuration records. AVCodec's generic
+image-size check is stricter than PCX's six-byte-per-pixel worst-case RLE bound,
+while ADX and ANM use bounded header, channel, record, and packet sizes.
+AudioFIFO validates sample-buffer products before capacity changes. FLAC, MIPS,
+Wasm SAO, and MPEGVideo helpers receive codec-owned lengths and padded buffers;
+OpenCL helpers and the vibrato and sine filters retain negotiated geometry or
+sample counts. XTEA's block count and storage are a public caller contract, and
+generic RTP parsing bounds the SVQ3 and Opus payload lengths and supplies packet
+padding.
+
+The user-supplied H.264 line-by-line chain independently matches the existing
+`h264-slice-sentinel-collision` survivor: the `0xFFFF` poison and per-picture
+re-poisoning, spare stride column, deblocking-only equality,
+`top_borders[-1]`, 96-byte record stride, and luma/chroma exchanges all align
+with its recorded trace. This is stronger corroboration, not a new root, and is
+not counted again.
+
+The eight roots raise the totals to 118 confirmed root causes and 103
+dynamically reproduced issues. Coverage is 1,668/4,995 (33.39%), with 3,327
+historically ranked files remaining.
+
+Direct deterministic regeneration reproduces ranks 1645–1668 exactly and seals
+ranks 1669–1692 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1669_1692.json` with SHA-256
+`c33432278b7327473f5929d86c12f0f9a6d3d35e0644d5a44f215144677f381f`.
