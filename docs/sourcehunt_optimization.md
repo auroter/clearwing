@@ -4175,3 +4175,76 @@ Direct deterministic regeneration reproduces ranks 1645–1668 exactly and seals
 ranks 1669–1692 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1669_1692.json` with SHA-256
 `c33432278b7327473f5929d86c12f0f9a6d3d35e0644d5a44f215144677f381f`.
+
+### Blind wave 1669–1692 and two dynamically reproduced roots
+
+The wave completed source-bearing work on all 24 exact paths in one pinned
+session. It settled 907 model calls using 8,960,977 input tokens and 149,972
+output tokens, 9,110,949 total, and made 175 raw candidate/finding calls. The
+online scaffold retained no formal finding. Offline invariant review recovered
+two distinct roots and reproduced both through public APIs.
+
+Screenpresso allocates a nonzeroed full-frame deflate destination and accepts
+zlib success without checking the returned output length. A public 4x1 BGR24
+keyframe whose valid stream expands to only three bytes is therefore published
+as a complete 12-byte visible row. With ASan's heap fill fixed to `0xA5`, the
+decoder proof observes the three supplied bytes followed by all nine untouched
+allocator bytes. Exact later repair `c22667d0fd` rejects deflate output shorter
+than the aligned frame and explicitly identifies use of uninitialized memory.
+
+Colorbalance advertises planar GBR formats both with and without alpha, and its
+eventual alpha copy checks whether the fourth plane exists. Both planar
+callbacks nevertheless form source and destination alpha pointers before that
+guard. A public tight 4x4 GBRP frame has three valid planes but null `data[3]`
+and zero `linesize[3]`. The production `color_balance8_p` callback evaluates
+`data[3] + 0`, and UBSan aborts for applying a zero offset to a null pointer.
+The higher-depth planar callback contains the same invariant.
+
+The durable artifacts are
+`evaluations/run_ffmpeg_screenpresso_short_output_disclosure_reproducer.py` and
+`evaluations/run_ffmpeg_colorbalance_planar_alpha_null_reproducer.py`, with
+their matching C harnesses. Their ignored reports pin commit
+`795bccdaf57772b1803914dee2f32d52776518e2`, record the public inputs and
+production sinks, and report `expected_observed=true`.
+
+The transient online findings do not survive source contracts. EVC propagates
+`parse_nal_unit`'s negative-size error immediately, before adjusting either the
+data pointer or remaining length. S337M's probe may read beyond the logical
+probe length after recognizing a trailing marker, but all six possible bytes
+remain inside mandatory `AVPROBE_PADDING_SIZE` storage. MLP's parity lookahead
+similarly remains inside mandatory packet/parser padding, while its major-sync
+header is at most 60 bytes and is checked before the checksum read.
+
+The remaining allocation leads also close. AV1 QSV starts each per-frame encode
+control at zero with eight extension slots, and its callback can add only the
+two HDR metadata objects; ROI is restricted to H.264 and HEVC. ATRAC's five-bit
+quant-unit value either indexes its 32-entry table or is rejected, and its
+maximum maps to exactly 16 allocated subbands. JPEG-LS regular contexts end at
+364 while run contexts use the separately sized entries 365 and 366. The ALS
+channel count reaches a codec-wide sane-channel rejection before allocation.
+
+Filter geometry is likewise bounded by negotiated formats and sizes.
+Asupercut's option maximum keeps coefficients and two-value state within ten
+entries; Neighbor's middle kernel processes `width - 2`, so its two-pixel
+lookahead ends at the last visible sample. LimitDiff and FreezeFrames require
+matching input geometry and common formats, SelectiveColor guards every
+two-byte profile read, and Convolve's checked square allocations dominate its
+negotiated transforms. MediaCodec strings are freed on success and failure;
+SRT and ffeval use completeness-checked dynamic buffers; and legacy swscale
+buffer dimensions remain an explicit public caller contract.
+
+R3D's seek path uses the offset count where it should use an index offset, but
+that is a bounded correctness failure. MCA's coefficient-offset expression is
+also semantically suspicious, yet all reads go through bounded AVIO operations
+and its seek product fits signed 64-bit under the validated block, channel, and
+sample-count domains. WebM's long-path history is feature work rather than a
+memory-safety repair.
+
+The two roots raise the totals to 120 confirmed root causes and 105 dynamically
+reproduced issues. Coverage is 1,692/4,995 (33.87%), with 3,303 historically
+ranked files remaining.
+
+Direct deterministic regeneration reproduces ranks 1669–1692 exactly and seals
+ranks 1693–1716 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1693_1716.json` with SHA-256
+`725b7960fba6b9818fd6d46122303b72e8f6253ea75b8f66ceeb4e1c5b230335`.

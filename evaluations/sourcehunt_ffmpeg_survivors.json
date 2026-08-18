@@ -6462,5 +6462,155 @@
         "end": 123
       }
     ]
+  },
+  {
+    "case_id": "screenpresso-short-deflate-heap-disclosure",
+    "finding": {
+      "id": "ffmpeg-screenpresso-short-deflate-heap-disclosure",
+      "finding_type": "information_disclosure",
+      "cwe": "CWE-200",
+      "file": "libavcodec/screenpresso.c",
+      "line_number": 148,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "The Screenpresso decoder gives zlib a nonzeroed full-frame heap allocation but checks only the decompressor's status, not its returned length, before copying a complete aligned visible plane. A public 4x1 BGR24 keyframe whose valid zlib stream expands to three bytes therefore publishes nine untouched heap bytes in the remaining 12-byte visible row. An ASan malloc-fill decoder proof deterministically observes all nine marker bytes in the returned AVFrame. Exact later repair c22667d0fd rejects output shorter than the aligned frame and explicitly identifies use of uninitialized memory.",
+      "code_snippet": "ret = uncompress(ctx->inflated_buf, &length, ...); if (ret) return ...; ... av_image_copy_plane(..., ctx->inflated_buf, src_linesize, width * component_size, height);",
+      "poc": "Build and run evaluations/ffmpeg_screenpresso_short_output_disclosure_reproducer.c with evaluations/run_ffmpeg_screenpresso_short_output_disclosure_reproducer.py against the configured sanitizer build. Its ignored report records nine ASan malloc-fill bytes in the returned public frame and expected_observed=true.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a valid short deflate stream leaves most of a nonzeroed decoder allocation untouched, and Screenpresso publishes that heap tail as visible pixels",
+        "steps": [
+          {
+            "file": "libavcodec/screenpresso.c",
+            "line": 73,
+            "function": "screenpresso_init",
+            "code_snippet": "ctx->inflated_size = avctx->width * avctx->height * 4; ctx->inflated_buf = av_malloc(ctx->inflated_size);",
+            "note": "The public 4x1 context receives a 16-byte nonzeroed inflate allocation."
+          },
+          {
+            "file": "libavcodec/screenpresso.c",
+            "line": 132,
+            "function": "screenpresso_decode_frame",
+            "code_snippet": "ret = uncompress(ctx->inflated_buf, &length, avpkt->data + 2, avpkt->size - 2);",
+            "note": "The valid keyframe stream writes only three bytes and updates length accordingly."
+          },
+          {
+            "file": "libavcodec/screenpresso.c",
+            "line": 135,
+            "function": "screenpresso_decode_frame",
+            "code_snippet": "if (ret) { ... return AVERROR_UNKNOWN; }",
+            "note": "The vulnerable path accepts zlib success without comparing the short returned length with the required frame size."
+          },
+          {
+            "file": "libavcodec/screenpresso.c",
+            "line": 144,
+            "function": "screenpresso_decode_frame",
+            "code_snippet": "src_linesize = FFALIGN(avctx->width * component_size, 4);",
+            "note": "Four BGR24 pixels require a complete 12-byte source row."
+          },
+          {
+            "file": "libavcodec/screenpresso.c",
+            "line": 148,
+            "function": "screenpresso_decode_frame",
+            "code_snippet": "av_image_copy_plane(..., ctx->inflated_buf, src_linesize, avctx->width * component_size, avctx->height);",
+            "note": "The keyframe copy publishes all 12 bytes, including the nine untouched ASan allocator-fill bytes reproduced by the public harness."
+          },
+          {
+            "file": "libavcodec/screenpresso.c",
+            "line": 147,
+            "function": "later repair c22667d0fd",
+            "code_snippet": "if (length < src_linesize * avctx->height) return AVERROR_INVALIDDATA;",
+            "note": "The exact later repair names use of uninitialized memory and rejects precisely this short expansion."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/screenpresso.c",
+        "start": 52,
+        "end": 80
+      },
+      {
+        "path": "libavcodec/screenpresso.c",
+        "start": 103,
+        "end": 168
+      }
+    ]
+  },
+  {
+    "case_id": "colorbalance-planar-absent-alpha-null-pointer-ub",
+    "finding": {
+      "id": "ffmpeg-colorbalance-planar-absent-alpha-null-pointer-ub",
+      "finding_type": "null_pointer_dereference",
+      "cwe": "CWE-476",
+      "file": "libavfilter/vf_colorbalance.c",
+      "line_number": 161,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "Colorbalance advertises planar GBR formats both with and without alpha, and correctly guards its eventual alpha copy on the alpha linesize. Its planar callbacks nevertheless construct source and destination alpha pointers unconditionally before that guard. A public tight 4x4 GBRP frame has three valid color planes while data[3] is null and linesize[3] is zero. The selected production color_balance8_p callback therefore evaluates data[3] + 0, and UBSan aborts for applying a zero offset to a null pointer. The 9- through 16-bit planar callback contains the same absent-plane invariant.",
+      "code_snippet": "const uint8_t *srca = in->data[3] + slice_start * in->linesize[3]; ... if (in != out && out->linesize[3]) dsta[j] = srca[j];",
+      "poc": "Run evaluations/run_ffmpeg_colorbalance_planar_alpha_null_reproducer.py against a configured sanitizer build with colorbalance enabled. Its ignored report records the public tight GBRP frame, the production callback, the null alpha plane, UBSan's null-pointer-arithmetic abort, and expected_observed=true.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "an ordinary alpha-less planar RGB frame reaches unconditional pointer arithmetic on its absent fourth plane before colorbalance's later alpha-copy guard",
+        "steps": [
+          {
+            "file": "libavfilter/vf_colorbalance.c",
+            "line": 84,
+            "function": "pix_fmts",
+            "code_snippet": "AV_PIX_FMT_GBRP, AV_PIX_FMT_GBRAP",
+            "note": "The public filter explicitly accepts both three-plane GBRP and its four-plane alpha variant."
+          },
+          {
+            "file": "libavfilter/vf_colorbalance.c",
+            "line": 373,
+            "function": "config_output",
+            "code_snippet": "if (max == 255 && planar) s->color_balance = color_balance8_p;",
+            "note": "An eight-bit GBRP frame selects the production planar callback reproduced by the harness."
+          },
+          {
+            "file": "libavfilter/vf_colorbalance.c",
+            "line": 161,
+            "function": "color_balance8_p",
+            "code_snippet": "const uint8_t *srca = in->data[3] + slice_start * in->linesize[3];",
+            "note": "For the valid three-plane frame data[3] is null and linesize[3] is zero; UBSan aborts on the unconditional zero-offset arithmetic."
+          },
+          {
+            "file": "libavfilter/vf_colorbalance.c",
+            "line": 186,
+            "function": "color_balance8_p",
+            "code_snippet": "if (in != out && out->linesize[3]) dsta[j] = srca[j];",
+            "note": "The eventual copy knows that alpha may be absent, but this guard occurs after both alpha pointers have already been formed."
+          },
+          {
+            "file": "libavfilter/vf_colorbalance.c",
+            "line": 214,
+            "function": "color_balance16_p",
+            "code_snippet": "const uint16_t *srca = (const uint16_t *)in->data[3] + slice_start * in->linesize[3] / 2;",
+            "note": "Every advertised alpha-less 9- through 16-bit GBRP format has the same independent callback invariant."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/vf_colorbalance.c",
+        "start": 76,
+        "end": 90
+      },
+      {
+        "path": "libavfilter/vf_colorbalance.c",
+        "start": 150,
+        "end": 218
+      },
+      {
+        "path": "libavfilter/vf_colorbalance.c",
+        "start": 360,
+        "end": 410
+      }
+    ]
   }
 ]
