@@ -10021,5 +10021,170 @@
         "end": 160
       }
     ]
+  },
+  {
+    "case_id": "pixelize-row-slice-signed-overflow-oob-read",
+    "finding": {
+      "id": "ffmpeg-pixelize-row-slice-signed-overflow-oob-read",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-190",
+      "file": "libavfilter/vf_pixelize.c",
+      "line_number": 192,
+      "severity": "low",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "Pixelize partitions both raw rows and block rows with signed-int total-times-job products. The public filter accepts block height one, a valid 1x2,080,410 gray frame passes generic image validation, and 2,065 explicitly configured graph threads dispatch job 2,064. UBSan reports 2,080,410 times 2,064 overflowing at the production callback. Ordinary wrapping makes both selected slice starts -484; the filtered-plane path derives its source pointer from that negative block row, and an ASan-instrumented pixel callback reports a one-byte pre-frame read. Exact repair f7368f97b92a0afe8dc8368a4b6749704b740317 replaces all four products with the int64-based ff_slice_pos helper and processes rows 2,079,402 through 2,080,410 cleanly. This is a distinct callback and data path from the earlier AEmphasis and x86 LUT3D roots fixed by the same broad commit.",
+      "code_snippet": "const int slice_start = (h * jobnr) / nb_jobs; ... s->pixelize[mode](src + s->block_h[p] * y * in_linesize + ...);",
+      "poc": "Run evaluations/run_ffmpeg_pixelize_slice_overflow_reproducer.py against the pinned configured tree. It records the exact signed overflow under UBSan and the wrapped negative-row read under ASan, then compiles and runs the exact ff_slice_pos repaired source cleanly.",
+      "discovered_by": "sourcehunt:offline-repair-diff-plus-dynamic-proof",
+      "vulnerability_trace": {
+        "summary": "a public one-row Pixelize block and large explicit thread count overflow the row-slice product, selecting a block before the input frame",
+        "steps": [
+          {
+            "file": "libavutil/imgutils.c",
+            "line": 301,
+            "function": "av_image_check_size2",
+            "code_snippet": "stride*(h + 128ULL) >= INT_MAX",
+            "note": "A gray width-one, height-2,080,410 frame remains below the generic stride-times-height limit and is accepted."
+          },
+          {
+            "file": "libavfilter/avfiltergraph.c",
+            "line": 52,
+            "function": "filtergraph_options",
+            "code_snippet": "{ \"threads\", \"Maximum number of threads\", ..., 0, INT_MAX, ... }",
+            "note": "The public graph option accepts 2,065 filter threads."
+          },
+          {
+            "file": "libavfilter/vf_pixelize.c",
+            "line": 311,
+            "function": "pixelize_options",
+            "code_snippet": "{ \"height\", \"set block height\", ..., 1, 1024, ... }",
+            "note": "Block height one is explicitly supported, so the block-row total equals the full frame height."
+          },
+          {
+            "file": "libavfilter/vf_pixelize.c",
+            "line": 293,
+            "function": "filter_frame",
+            "code_snippet": "FFMIN((s->planeheight[1] + s->block_h[1] - 1) / s->block_h[1], ff_filter_get_nb_threads(ctx))",
+            "note": "The available block rows exceed the configured thread count, so job 2,064 is dispatched."
+          },
+          {
+            "file": "libavfilter/vf_pixelize.c",
+            "line": 192,
+            "function": "pixelize_slice",
+            "code_snippet": "const int wslice_start = (wh * jobnr) / nb_jobs; ... const int slice_start = (h * jobnr) / nb_jobs;",
+            "note": "UBSan reports the first 2,080,410-times-2,064 product; two's-complement wrapping makes the filtered block slice start at -484."
+          },
+          {
+            "file": "libavfilter/vf_pixelize.c",
+            "line": 215,
+            "function": "pixelize_slice",
+            "code_snippet": "s->pixelize[mode](src + s->block_h[p] * y * in_linesize + ...);",
+            "note": "The negative y derives a pointer before the frame. ASan reports a one-byte poisoned-prefix read; the exact repair begins at row 2,079,402 and exits cleanly."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/vf_pixelize.c",
+        "start": 180,
+        "end": 225
+      },
+      {
+        "path": "libavfilter/vf_pixelize.c",
+        "start": 260,
+        "end": 320
+      },
+      {
+        "path": "libavfilter/avfiltergraph.c",
+        "start": 44,
+        "end": 60
+      },
+      {
+        "path": "libavutil/imgutils.c",
+        "start": 289,
+        "end": 320
+      },
+      {
+        "path": "libavfilter/filters.h",
+        "start": 745,
+        "end": 770
+      }
+    ]
+  },
+  {
+    "case_id": "yuv2rgb-gbrp-visible-tail-disclosure",
+    "finding": {
+      "id": "ffmpeg-yuv2rgb-gbrp-visible-tail-disclosure",
+      "finding_type": "information_disclosure",
+      "cwe": "CWE-200",
+      "file": "libswscale/x86/yuv2rgb.c",
+      "line_number": 219,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "The x86 SSSE3 planar-GBRP wrapper applies a packed-RGB three-bytes-per-pixel boundary test to a destination whose three components occupy separate one-byte planes. For an ordinary 16-pixel row with 16-byte plane strides, the mistaken h_size times three comparison always subtracts eight and asks the assembly converter to initialize only pixels zero through seven. The rightmost eight visible pixels of all three output planes retain their previous allocation contents. An exact-wrapper proof pre-fills the caller-supplied public scaler destination with marker bytes and observes all 24 visible tail bytes unchanged. Exact repair e1be70dcac1f84e425f00c32d012e8e10b20c082 removes the factor of three, explicitly identifies the rightmost pixels as completely uninitialized, and initializes all 16 pixels with no markers remaining.",
+      "code_snippet": "h_size = (c->opts.dst_w + 7) & ~7; if (h_size * 3 > FFABS(dstStride[0])) h_size -= 8;",
+      "poc": "Run evaluations/run_ffmpeg_yuv2rgb_gbrp_tail_disclosure_reproducer.py against the pinned configured tree. It invokes the production x86 wrapper with an instrumented assembly sink, observes 24 untouched visible marker bytes, and verifies that the exact repaired source initializes the complete row.",
+      "discovered_by": "sourcehunt:offline-repair-diff-plus-dynamic-proof",
+      "vulnerability_trace": {
+        "summary": "a packed-format stride test shortens planar GBRP conversion by eight pixels and publishes prior destination bytes in every visible plane tail",
+        "steps": [
+          {
+            "file": "libswscale/swscale.h",
+            "line": 544,
+            "function": "sws_scale",
+            "code_snippet": "int sws_scale(..., uint8_t *const dst[], const int dstStride[]);",
+            "note": "The public scaling API accepts caller-owned destination planes; visible output pixels are expected to be initialized by the conversion."
+          },
+          {
+            "file": "libswscale/x86/yuv2rgb.c",
+            "line": 273,
+            "function": "ff_yuv2rgb_init_x86",
+            "code_snippet": "case AV_PIX_FMT_GBRP: return yuv420_gbrp_ssse3;",
+            "note": "SSSE3-capable x86-64 hosts select the affected wrapper for planar GBRP output."
+          },
+          {
+            "file": "libswscale/x86/yuv2rgb.c",
+            "line": 218,
+            "function": "yuv420_gbrp_ssse3",
+            "code_snippet": "h_size = (c->opts.dst_w + 7) & ~7; if (h_size * 3 > FFABS(dstStride[0])) h_size -= 8;",
+            "note": "At width and stride 16, the packed-depth comparison reduces h_size from 16 to eight even though each destination plane has room for all 16 pixels."
+          },
+          {
+            "file": "libswscale/x86/yuv2rgb.c",
+            "line": 231,
+            "function": "yuv420_gbrp_ssse3",
+            "code_snippet": "x86_reg index = -h_size / 2;",
+            "note": "The wrapper encodes the shortened width as index -4 rather than the correct -8."
+          },
+          {
+            "file": "libswscale/x86/yuv2rgb.c",
+            "line": 233,
+            "function": "yuv420_gbrp_ssse3",
+            "code_snippet": "ff_yuv_420_gbrp24_ssse3(index, dst_g, dst_b, dst_r, ...);",
+            "note": "The assembly sink receives all three planes but only eight pixels. The proof observes eight untouched bytes per visible plane; the exact repair leaves zero."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libswscale/x86/yuv2rgb.c",
+        "start": 205,
+        "end": 238
+      },
+      {
+        "path": "libswscale/x86/yuv2rgb.c",
+        "start": 241,
+        "end": 281
+      },
+      {
+        "path": "libswscale/swscale.h",
+        "start": 520,
+        "end": 548
+      }
+    ]
   }
 ]

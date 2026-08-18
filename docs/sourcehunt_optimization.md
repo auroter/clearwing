@@ -5951,3 +5951,80 @@ software pixel format descriptor.
 The four roots raise the totals to 166 confirmed root causes and 144 dynamically
 reproduced issues. Historical coverage is 2,292/4,995 (45.89%), with 2,703
 historically ranked files remaining.
+
+### Blind wave 2293–2316 and two repair-confirmed roots
+
+The transferred early instrumentation restored the selector's complete state:
+155 event files contain 153 bounded ledgers and exactly 2,292 unique paths.
+With ranks 2269–2292 withheld, deterministic regeneration reproduced their
+manifest and SHA-256 `fcc66e5467a5284aa62ea11bc6f175b2be0e31679174e266088169712ce4f084`
+exactly. The full bounded set then sealed ranks 2293–2316 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_2293_2316.json` with SHA-256
+`9d5137912451ce3fe544f3090a5fd7106000f179f58cfb53878f7b0bf01396f1`.
+
+The wave completed source-bearing work on all 24 exact paths in one pinned
+session through the replacement endpoint. It settled 714 model calls using
+6,423,262 input tokens and 97,618 output tokens, 6,520,880 total, and made 90
+raw candidate calls. It submitted no formal findings.
+
+Offline repair review recovered two independent roots:
+
+- Pixelize computes raw-row and block-row slice boundaries with signed-int
+  total-times-job products. The public filter accepts block height one, a
+  1x2,080,410 gray frame passes image validation, and 2,065 explicit graph
+  threads dispatch job 2,064. UBSan reports the production
+  `2,080,410 * 2,064` overflow; wrapping selects block row -484, and an
+  ASan-instrumented pixel callback reports a one-byte pre-frame read. Exact
+  repair `f7368f97b92a0afe8dc8368a4b6749704b740317` uses `ff_slice_pos()` for all
+  four boundaries and begins at row 2,079,402 cleanly. This is a distinct
+  callback and data path from the prior AEmphasis and x86 LUT3D roots.
+- The x86 SSSE3 YUV-to-GBRP wrapper applies a packed three-byte RGB boundary
+  test to three separate one-byte destination planes. With an ordinary
+  16-pixel row and 16-byte strides, it reduces the assembly width to eight and
+  leaves the rightmost eight visible pixels of all three planes untouched. An
+  exact-wrapper proof pre-fills the public caller-owned destination and observes
+  24 marker bytes survive. Repair
+  `e1be70dcac1f84e425f00c32d012e8e10b20c082` removes the factor of three,
+  explicitly calls the pixels completely uninitialized, and initializes all 16
+  pixels with no markers remaining.
+
+The durable artifacts are
+`ffmpeg_pixelize_slice_overflow_reproducer.c`,
+`run_ffmpeg_pixelize_slice_overflow_reproducer.py`,
+`ffmpeg_yuv2rgb_gbrp_tail_disclosure_reproducer.c`, and
+`run_ffmpeg_yuv2rgb_gbrp_tail_disclosure_reproducer.py` under `evaluations/`.
+Both ignored reports pin commit
+`795bccdaf57772b1803914dee2f32d52776518e2`, verify the exact repaired sources,
+and record `expected_observed=true`.
+
+Neither terminal ledger retained either root. Pixelize closed without a
+candidate, while YUV2RGB pursued a nonexistent padded-stride overrun rather
+than the visible stale-output tail. Recall is therefore 0/2 from terminal
+ledgers and 0/2 from formal findings.
+
+The remaining candidates close under concrete bounds and API contracts. AC-3
+always calls its eight-at-a-time fixed scaler with length 256. DCA dequantizer
+lengths are fixed `DCA_SUBBAND_SAMPLES` constants, and CRC endpoints are checked
+against the packet-backed bit count. ACELP delay returns are in thirds of a
+sample and caller-derived interval minima keep them within the documented
+pitch range. FLAC stream-info fields have small fixed bit widths, while VLC
+tables are initialized from codec-owned validated specifications. VVC Annex-B
+conversion writes to a growing dynamic AVIO buffer; the VAAPI MPEG-2 bit reader
+receives padded slice storage. TQI's codec allocator supplies macroblock edge
+padding, and Hue's eight-bit samples are intrinsically valid 256-entry indices.
+
+Dolby Vision extension counts reaching the public metadata helpers originate
+from bounded internal parsers, and allocation callers check the returned
+pointer before consuming its size. Detection-box and video-encoding side data
+are likewise constructor-owned rather than raw packet overlays. Timestamp's
+32-byte output requirement is explicit, swscale's format helper receives only
+internally validated formats, and framebuffer enumeration trusts its local
+kernel ABI. The extreme APad duration candidate changes an already
+centuries-long explicit configuration into indefinite padding without a
+media-triggered memory-safety effect. MPEG-4 stride-width and the remaining
+post-pin changes are maintenance or output-correctness changes without another
+independent root.
+
+The two roots raise the totals to 168 confirmed root causes and 146 dynamically
+reproduced issues. Historical coverage is 2,316/4,995 (46.37%), with 2,679
+historically ranked files remaining.
