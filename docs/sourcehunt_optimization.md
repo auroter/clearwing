@@ -5488,3 +5488,83 @@ Direct deterministic regeneration over this machine's 4,993-file tree
 reproduces ranks 2101–2148 exactly and seals ranks 2149–2172 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_2149_2172.json` with SHA-256
 `225ac08c9face721b9d673c22ceff3299a5f893da59d697eeea5bb2472afed80`.
+
+### Blind wave 2149–2172 and four retained roots
+
+The wave completed source-bearing work on all 24 exact paths in one pinned
+session. It settled 918 model calls using 9,092,122 input tokens and 158,794
+output tokens, 9,250,916 total, and made 174 raw candidate/finding calls. It
+submitted no formal findings.
+
+Post-campaign repair review and exact-source proof retain four roots. HEIF's
+property parser stores one attacker-supplied ICC profile once, but an `ipma`
+box may associate it with an input-controlled number of items. Each association
+rewinds the property reader and allocates and copies the complete profile into
+that item. The production-parser proof turns one shared 1 MiB property into 32
+retained copies totaling 32 MiB. Exact repair `711cdae64f` adds a context-wide
+counter capped by `max_streams`; the identical replay with a limit of eight
+retains only 8 MiB. The repair explicitly identifies the CPU and memory bound.
+
+Alphamerge compares only negotiated link dimensions. Buffersrc permits later
+video-size changes with a warning, while the configured build compiles the
+generic `av_assert1` geometry checks away. After two 1x1 inputs negotiate, an
+8x8 packed main frame synchronized with a 1x1 alpha frame makes the production
+copy loop traverse the one-byte alpha plane using the main frame's current
+geometry. ASan reports the first one-byte read immediately after that exact
+allocation. Current master remains unchecked.
+
+HLS append-list parsing accepts `EXTINF` through unchecked `atof` and advances
+program-date-time state by that duration. The writer converts the resulting
+finite, in-`int64_t` value to `time_t`; for the greatest binary64 integer below
+2^63, `localtime_r` returns NULL, and the unchecked pointer reaches `strftime`.
+ASan records the resulting zero-page read. This requires append-list plus
+program-date-time output and is retained as low-severity availability impact;
+current master remains unchecked.
+
+Finally, the VP9 `vpcC` level estimator stores `width * height` in signed
+`int`. Positive 65,535x65,535 mux dimensions have mathematical area
+4,294,836,225, and UBSan aborts at the exact multiplication in
+`get_vp9_level`. MOV and FLV header paths reach it when the level is unknown.
+Ordinary wrapping emits level zero, so this is low-severity hardened-build
+availability and output-integrity impact. Current master remains unchecked.
+
+The durable artifacts are the four matching C harnesses and runners under
+`evaluations/`: `ffmpeg_heif_icc_profile_amplification`,
+`ffmpeg_alphamerge_dynamic_size`, `ffmpeg_hls_program_date_time`, and
+`ffmpeg_vpcc_picture_size_overflow`. Their ignored reports pin commit
+`795bccdaf57772b1803914dee2f32d52776518e2` and all record
+`expected_observed=true`; the HEIF report also records the clean bounded repair
+replay.
+
+Terminal-ledger scoring recovers one of the four mechanisms: the HLS NULL
+dereference. Alphamerge was considered but incorrectly dismissed by assuming
+configured dimensions remained current; HEIF and VPCC were missed. Effective
+recall is therefore 1/4 from terminal ledgers and 0/4 from formal findings.
+
+The remaining candidates close under exact contracts. Swscale's chain count is
+zero-initialized, incremented only by its checked append function, and cannot
+skip past the exact `SWS_MAX_OPS` guard. MPEG audio, ACELP, CBS VP8, AC-3, FLV,
+and Blu-ray PCM use fixed table domains, always-on checks, supported layouts,
+or exactly sized codec-owned buffers. VP9, VC-1, Snow, and Dirac DSP paths
+inherit edge padding, emulation, or format height invariants. MPSUB's `%n`
+indices remain within its terminated line and only normalize the fractional
+integer; Ingenient passes its declared length to the bounded packet API.
+The VisualOn encoder's maximum output is its external API contract, MOV keeps
+auxiliary sample counts with their allocation, and WinRT callbacks retain their
+objects until synchronous removal. The remaining timestamp and header leads
+affect metadata, bounded allocation, or format correctness rather than an
+allocation escape.
+
+The four roots raise the totals to 153 confirmed root causes and 131 dynamically
+reproduced issues. Historical coverage is 2,172/4,995 (43.48%), with 2,823
+historically ranked files remaining.
+
+The missing early result archive is not required for the next selector step.
+All 83 committed canonical manifests covering ranks 181–2172 exactly match
+direct slices of the unchanged deterministic ranker, with no mismatch, and the
+1,368 bounded paths available on this machine equal ranks 805–2172 exactly,
+with no missing or extra path. This independently reconstructs the covered
+prefix without manufacturing instrumentation events. The next exact-path
+manifest seals ranks 2173–2196 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_2173_2196.json` with SHA-256
+`8f39768fb53cc9913735de3bec3173c4bc5180072256e4d00a98f40b14c16ae5`.

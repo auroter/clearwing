@@ -8745,5 +8745,307 @@
         "end": 295
       }
     ]
+  },
+  {
+    "case_id": "heif-icc-profile-copy-amplification",
+    "finding": {
+      "id": "ffmpeg-heif-icc-profile-copy-amplification",
+      "finding_type": "denial_of_service",
+      "cwe": "CWE-400",
+      "file": "libavformat/mov.c",
+      "line_number": 2148,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "The HEIF property parser stores one attacker-supplied colr/prof box once, but ipma may associate that property with an input-controlled number of HEIF item IDs. For every association, mov_read_iprp resets the same property reader and mov_read_colr allocates and copies the complete ICC payload into that item without a global bound. The exact-source proof associates one 1 MiB profile with 32 items and observes 32 separate copies totaling 32 MiB. Applying exact repair 711cdae64f to the pinned sources caps the same replay at max_streams=8 and retains only eight copies. The upstream commit explicitly bounds CPU and memory and credits a human-verified Claude finding.",
+      "code_snippet": "c->cur_item_id = item_id; ret = mov_read_default(...); ffio_init_read_context(&ref->b, ref->data, ref->size); ... item->icc_profile = av_malloc(atom.size - 4);",
+      "poc": "Run evaluations/run_ffmpeg_heif_icc_profile_amplification_reproducer.py against the pinned configured tree. It drives the exact mov_read_colr allocation/copy sink with mov_read_iprp's reset-and-dispatch semantics, records 32 MiB copied from one shared 1 MiB property across 32 attacker-controlled associations, and shows exact repair 711cdae64f limiting the same replay to max_streams=8.",
+      "discovered_by": "sourcehunt:offline-post-pin-diff",
+      "vulnerability_trace": {
+        "summary": "one stored HEIF ICC property is rewound, allocated, and copied once per attacker-controlled item association, producing multiplicative CPU and memory growth",
+        "steps": [
+          {
+            "file": "libavformat/mov.c",
+            "line": 9128,
+            "function": "mov_read_iinf",
+            "code_snippet": "entry_count = version ? avio_rb32(pb) : avio_rb16(pb); ... heif_item = av_realloc_array(..., FFMAX(entry_count, c->nb_heif_item), ...);",
+            "note": "The HEIF metadata declares the item population. Non-image item types still create HEIFItem records without consuming the format context's stream limit."
+          },
+          {
+            "file": "libavformat/mov.c",
+            "line": 9408,
+            "function": "mov_read_iprp",
+            "code_snippet": "ref->data = av_malloc(ref->size); ... avio_read(pb, ref->data, ref->size);",
+            "note": "ipco reads and retains the ICC property box only once."
+          },
+          {
+            "file": "libavformat/mov.c",
+            "line": 9449,
+            "function": "mov_read_iprp",
+            "code_snippet": "count = avio_rb32(pb); for (int i = 0; i < count; i++) { int item_id = ...; ... ffio_init_read_context(&ref->b, ref->data, ref->size); }",
+            "note": "Each ipma association selects an input-controlled item ID, dispatches the stored property, then rewinds its reader for reuse."
+          },
+          {
+            "file": "libavformat/mov.c",
+            "line": 2148,
+            "function": "mov_read_colr",
+            "code_snippet": "icc_profile = item->icc_profile = av_malloc(atom.size - 4); ... ffio_read_size(pb, icc_profile, atom.size - 4);",
+            "note": "The vulnerable item branch has no cumulative copy count, so every association allocates and copies the entire profile. The proof turns one shared 1 MiB property into 32 MiB of retained item profiles."
+          },
+          {
+            "file": "libavformat/mov.c",
+            "line": 2148,
+            "function": "later repair 711cdae64f",
+            "code_snippet": "if (c->heif_icc_profile_items >= c->fc->max_streams) return 0; ... c->heif_icc_profile_items++;",
+            "note": "The exact repair adds a context-wide counter and caps total ICC item copies at the configured stream bound, explicitly to bound CPU and memory."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/mov.c",
+        "start": 2100,
+        "end": 2170
+      },
+      {
+        "path": "libavformat/mov.c",
+        "start": 9110,
+        "end": 9165
+      },
+      {
+        "path": "libavformat/mov.c",
+        "start": 9390,
+        "end": 9500
+      },
+      {
+        "path": "libavformat/isom.h",
+        "start": 285,
+        "end": 395
+      }
+    ]
+  },
+  {
+    "case_id": "alphamerge-dynamic-size-alpha-overread",
+    "finding": {
+      "id": "ffmpeg-alphamerge-dynamic-size-alpha-overread",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavfilter/vf_alphamerge.c",
+      "line_number": 77,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "Alphamerge compares only the two negotiated link dimensions during graph configuration. Buffersrc explicitly accepts changing video dimensions with a warning, and the configured release build compiles its generic geometry av_assert1 checks away. If a later packed main frame is 8x8 while the synchronized GRAY8 alpha frame remains 1x1, do_alphamerge loops over the main frame's current width and height but reads the alpha plane without checking its current dimensions. The exact-source proof allocates the one-byte alpha plane exactly and ASan reports the first one-byte read immediately after it. The bytes are copied into the main frame's alpha channel and can therefore flow to encoded output. Current master remains unchecked.",
+      "code_snippet": "for (y = 0; y < main_buf->height; y++) { pin = alpha_buf->data[0] + y * alpha_buf->linesize[0]; ... for (x = 0; x < main_buf->width; x++) { *pout = *pin; pin += 1; } }",
+      "poc": "Run evaluations/run_ffmpeg_alphamerge_dynamic_size_reproducer.py against the pinned configured tree. Negotiated inputs are both 1x1, then the exact do_alphamerge sink receives an 8x8 packed main frame and a 1x1 alpha frame; ASan reports a one-byte heap-buffer-overflow read at vf_alphamerge.c:77.",
+      "discovered_by": "sourcehunt:offline-dynamic-proof",
+      "vulnerability_trace": {
+        "summary": "dynamic synchronized inputs can diverge after the one-time link-size check, while the packed alpha copy uses the larger main frame geometry to traverse the smaller alpha plane",
+        "steps": [
+          {
+            "file": "libavfilter/buffersrc.c",
+            "line": 73,
+            "function": "CHECK_VIDEO_PARAM_CHANGE",
+            "code_snippet": "if (c->link_delta) { ... av_log(..., \"Changing video frame properties on the fly is not supported by all filters.\\n\"); }",
+            "note": "Unlike audio parameter changes, a video size change is logged and accepted rather than rejected."
+          },
+          {
+            "file": "libavfilter/avfilter.c",
+            "line": 1082,
+            "function": "ff_filter_frame",
+            "code_snippet": "av_assert1(frame->width == link->w); av_assert1(frame->height == link->h);",
+            "note": "These generic checks are av_assert1 only. ASSERT_LEVEL is undefined in the pinned configured build, so avassert.h compiles them to no-ops."
+          },
+          {
+            "file": "libavfilter/vf_alphamerge.c",
+            "line": 142,
+            "function": "config_output",
+            "code_snippet": "if (mainlink->w != alphalink->w || mainlink->h != alphalink->h) return AVERROR(EINVAL);",
+            "note": "The filter compares negotiated link sizes once, not the current synchronized frames later returned by framesync."
+          },
+          {
+            "file": "libavfilter/vf_alphamerge.c",
+            "line": 73,
+            "function": "do_alphamerge",
+            "code_snippet": "for (y = 0; y < main_buf->height; y++) { ... for (x = 0; x < main_buf->width; x++) { *pout = *pin; pin += 1; } }",
+            "note": "Both loop bounds come from the current main frame; neither is checked against the current alpha frame. With runtime 8x8 versus 1x1, ASan reports the x=1 read immediately after the exact one-byte alpha allocation."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/vf_alphamerge.c",
+        "start": 50,
+        "end": 165
+      },
+      {
+        "path": "libavfilter/buffersrc.c",
+        "start": 65,
+        "end": 95
+      },
+      {
+        "path": "libavfilter/buffersrc.c",
+        "start": 215,
+        "end": 250
+      },
+      {
+        "path": "libavfilter/avfilter.c",
+        "start": 1060,
+        "end": 1095
+      },
+      {
+        "path": "libavutil/avassert.h",
+        "start": 45,
+        "end": 65
+      }
+    ]
+  },
+  {
+    "case_id": "hls-program-date-time-null-dereference",
+    "finding": {
+      "id": "ffmpeg-hls-program-date-time-null-dereference",
+      "finding_type": "denial_of_service",
+      "cwe": "CWE-476",
+      "file": "libavformat/hlsplaylist.c",
+      "line_number": 175,
+      "severity": "low",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "In append-list mode, the HLS muxer parses an existing playlist's EXTINF value with atof and retains it as a segment duration without a finite or calendar-range check. With program-date-time output enabled, that duration advances the playlist's double timestamp. ff_hls_write_file_entry converts it to time_t, but passes localtime_r's unchecked NULL result directly to strftime. The exact-source proof uses the greatest binary64 integer below 2^63, which converts safely to int64_t but is outside the platform calendar range; ASan records strftime reading through the zero page. Current master remains unchecked. The root requires the append_list and program_date_time muxer options, so it is retained as low-severity availability impact.",
+      "code_snippet": "tt = (int64_t)*prog_date_time; ... tm = localtime_r(&tt, &tmpbuf); if (!strftime(buf0, sizeof(buf0), \"%Y-%m-%dT%H:%M:%S\", tm))",
+      "poc": "Run evaluations/run_ffmpeg_hls_program_date_time_reproducer.py against the pinned configured tree. It passes the finite in-int64 value 9,223,372,036,854,774,784 to the exact ff_hls_write_file_entry path; localtime_r returns NULL and ASan records the subsequent strftime zero-page read.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731-terminal-ledger-plus-offline-proof",
+      "vulnerability_trace": {
+        "summary": "an unchecked EXTINF duration can advance HLS program-date-time state outside localtime_r's calendar domain, and the writer passes its NULL result to strftime",
+        "steps": [
+          {
+            "file": "libavformat/hlsenc.c",
+            "line": 1190,
+            "function": "parse_playlist",
+            "code_snippet": "vs->duration = atof(ptr);",
+            "note": "An existing playlist supplied to append-list mode controls the double duration without a finite, sign, or range check."
+          },
+          {
+            "file": "libavformat/hlsenc.c",
+            "line": 1259,
+            "function": "parse_playlist",
+            "code_snippet": "ret = hls_append_segment(s, hls, vs, vs->duration, vs->start_pos, vs->size);",
+            "note": "The parsed duration is retained on the appended segment and later emitted when the HLS window is rewritten."
+          },
+          {
+            "file": "libavformat/hlsplaylist.c",
+            "line": 172,
+            "function": "ff_hls_write_file_entry",
+            "code_snippet": "tt = (int64_t)*prog_date_time;",
+            "note": "Program-date-time is a double initialized from wall clock and advanced by retained segment durations. The proof value is finite and below 2^63, so this conversion itself remains defined."
+          },
+          {
+            "file": "libavformat/hlsplaylist.c",
+            "line": 174,
+            "function": "ff_hls_write_file_entry",
+            "code_snippet": "tm = localtime_r(&tt, &tmpbuf);",
+            "note": "For the reproduced out-of-calendar-range time_t value, localtime_r returns NULL."
+          },
+          {
+            "file": "libavformat/hlsplaylist.c",
+            "line": 175,
+            "function": "ff_hls_write_file_entry",
+            "code_snippet": "strftime(buf0, sizeof(buf0), \"%Y-%m-%dT%H:%M:%S\", tm)",
+            "note": "No NULL check intervenes. ASan records a read through the zero page inside strftime."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/hlsplaylist.c",
+        "start": 140,
+        "end": 205
+      },
+      {
+        "path": "libavformat/hlsenc.c",
+        "start": 1145,
+        "end": 1270
+      },
+      {
+        "path": "libavformat/hlsenc.c",
+        "start": 1525,
+        "end": 1640
+      }
+    ]
+  },
+  {
+    "case_id": "vpcc-picture-size-signed-overflow",
+    "finding": {
+      "id": "ffmpeg-vpcc-picture-size-signed-overflow",
+      "finding_type": "denial_of_service",
+      "cwe": "CWE-190",
+      "file": "libavformat/vpcc.c",
+      "line_number": 80,
+      "severity": "low",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The VP9 vpcC level estimator multiplies positive AVCodecParameters width and height in signed int. Generic mux initialization requires only that both dimensions be positive, and MOV and FLV header writers call the estimator when the VP9 level is unknown. With width=height=65,535, the mathematical picture size is 4,294,836,225; UBSan aborts at the exact production multiplication. Ordinary two's-complement wrapping makes picture_size negative and emits level zero, so this is retained as low-severity hardened-build availability and output-integrity impact. Current master remains unchanged.",
+      "code_snippet": "static int get_vp9_level(...) { int picture_size = par->width * par->height; ... }",
+      "poc": "Run evaluations/run_ffmpeg_vpcc_picture_size_overflow_reproducer.py against the pinned configured tree. It supplies positive 65,535x65,535 VP9 codec parameters with unknown level to the exact ff_isom_get_vpcc_features path; UBSan aborts on the signed int multiplication in get_vp9_level.",
+      "discovered_by": "sourcehunt:offline-dynamic-proof",
+      "vulnerability_trace": {
+        "summary": "positive mux stream dimensions can overflow the vpcC level estimator's signed-int picture-area calculation before VP9 metadata is written",
+        "steps": [
+          {
+            "file": "libavformat/mux.c",
+            "line": 249,
+            "function": "init_muxer",
+            "code_snippet": "if ((par->width <= 0 || par->height <= 0) && !(of->p.flags & AVFMT_NODIMENSIONS)) return AVERROR(EINVAL);",
+            "note": "Generic mux validation rejects nonpositive dimensions but does not bound their product to signed int. Both proof dimensions pass."
+          },
+          {
+            "file": "libavformat/movenc.c",
+            "line": 1625,
+            "function": "mov_write_vpcc_tag",
+            "code_snippet": "ff_isom_write_vpcc(s, pb, track->extradata[...], track->extradata_size[...], track->par);",
+            "note": "The MOV VP9 sample-entry writer forwards the stream's codec parameters; FLV's extended VP9 sequence header has the same call."
+          },
+          {
+            "file": "libavformat/vpcc.c",
+            "line": 162,
+            "function": "ff_isom_get_vpcc_features",
+            "code_snippet": "int level = par->level == AV_LEVEL_UNKNOWN ? get_vp9_level(par, frame_rate) : par->level;",
+            "note": "An unknown level selects the dimension-derived estimator before vpcC output."
+          },
+          {
+            "file": "libavformat/vpcc.c",
+            "line": 80,
+            "function": "get_vp9_level",
+            "code_snippet": "int picture_size = par->width * par->height;",
+            "note": "UBSan reports signed overflow of 65,535 times 65,535. Mathematical area 4,294,836,225 exceeds INT_MAX and ordinary wrapping makes the later level selection return zero."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/vpcc.c",
+        "start": 65,
+        "end": 185
+      },
+      {
+        "path": "libavformat/movenc.c",
+        "start": 1605,
+        "end": 1640
+      },
+      {
+        "path": "libavformat/flvenc.c",
+        "start": 870,
+        "end": 905
+      },
+      {
+        "path": "libavformat/mux.c",
+        "start": 230,
+        "end": 270
+      }
+    ]
   }
 ]
