@@ -5568,3 +5568,75 @@ prefix without manufacturing instrumentation events. The next exact-path
 manifest seals ranks 2173–2196 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_2173_2196.json` with SHA-256
 `8f39768fb53cc9913735de3bec3173c4bc5180072256e4d00a98f40b14c16ae5`.
+
+### Blind wave 2173–2196 and ColorChannelMixer slice overflow
+
+The wave completed source-bearing work on all 24 exact paths in one pinned
+session. It settled 933 model calls using 9,105,403 input tokens and 153,749
+output tokens, 9,259,152 total, and made 198 raw candidate/finding calls. It
+submitted no formal findings.
+
+Offline repair-diff review and sanitizer proof retain one root.
+ColorChannelMixer has another independent copy of the signed slice-boundary
+arithmetic previously confirmed in Maskfun and Despill. Generic image
+validation accepts a 1x2,080,410 RGB24 frame, while the public graph thread
+option accepts 2,065 explicit threads. For job 2,064, the generated planar and
+packed callbacks multiply the height by the job boundaries in signed `int`.
+UBSan reports the exact production overflow; with integer instrumentation
+removed, ASan reports a one-byte read 1,452 bytes before the exact
+6,241,230-byte packed frame. Exact repair
+`f7368f97b92a0afe8dc8368a4b6749704b740317` sends all four generated products
+through the int64-based `ff_slice_pos()` helper, and the same last slice
+completes cleanly. Automatic threading is capped at 16, so this remains a
+low-severity root requiring an explicitly extreme thread configuration.
+
+The durable artifacts are
+`evaluations/ffmpeg_colorchannelmixer_slice_overflow_reproducer.c` and
+`evaluations/run_ffmpeg_colorchannelmixer_slice_overflow_reproducer.py`. The
+ignored report pins commit `795bccdaf57772b1803914dee2f32d52776518e2`, records
+the exact repaired replay, and reports `expected_observed=true`. The online
+hunter selected only the including filter source and repeatedly searched for
+the generated callback there rather than following the template include, so it
+made no terminal candidate for this mechanism. Recall is therefore 0/1 from
+terminal ledgers and 0/1 from formal findings.
+
+The strongest remaining parser and bit-reader claims close under dominating
+bounds. Vorbis's optimized floor renderer rebases `buf` by `x1 - 1` before
+using its negative loop index, so the first physical write remains at `x0`.
+LCEVC rejects a process-block payload larger than the remaining bytes and
+parses it through a sub-bitreader capped at that exact end. HDR10+ validates
+every variable count and remaining-bit requirement before filling arrays whose
+capacities exactly cover the encoded domains. Matroska binary elements own an
+exact padded buffer, and the shared DOVI parser rejects fewer than four bytes
+before its bounded four- or five-byte read.
+
+Table, DSP, and codec review likewise rejects the remaining memory-safety
+leaps. AAC caps the escape width before its final 8,191 cube-root index; QDM2
+and HQX build fixed static tables from fixed in-tree definitions; MPEG audio
+uses fixed window and hybrid-buffer domains. Swscale pack patterns are
+internally generated from supported pixel formats rather than packet values.
+VAAPI bounds the encoded OBU before copying to its fixed tail buffer. H.264
+reference counts are rejected above 15 frame or 31 field entries, and its
+chroma kernels receive codec-owned frame strides. The supplied H.264
+slice-table, spare-column, and `top_borders[-1]` trace remains direct
+corroboration of the already retained `h264-slice-sentinel-collision` root and
+is not counted again. The PPC stride-width change is maintenance; decoder edge
+padding still covers its vector loads.
+
+The packet and protocol leads do not establish an allocation escape. ADS's
+probe lookahead is inside mandatory probe padding; Opus cannot overflow a
+`uint64_t` accumulator with an `int`-sized input, and it checks the accumulated
+length before narrowing. NC, MSN, ISS, and the generic raw mux path use bounded
+packet helpers or public packet contracts. Unix-socket path truncation is a
+configuration correctness issue, while libssh's unchecked extreme relative
+seek arithmetic reaches only the remote seek API rather than a local memory
+sink.
+
+The new root raises the totals to 154 confirmed root causes and 132 dynamically
+reproduced issues. Historical coverage is 2,196/4,995 (43.96%), with 2,799
+historically ranked files remaining.
+
+Direct deterministic regeneration reproduces ranks 2173–2196 exactly and
+seals ranks 2197–2220 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_2197_2220.json` with SHA-256
+`2bec967c9ec7f0466acefe1b77debf55660053339155267c5e70a2e0c5c28d81`.

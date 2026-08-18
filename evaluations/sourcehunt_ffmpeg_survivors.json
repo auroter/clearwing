@@ -9047,5 +9047,84 @@
         "end": 270
       }
     ]
+  },
+  {
+    "case_id": "colorchannelmixer-slice-boundary-signed-overflow",
+    "finding": {
+      "id": "ffmpeg-colorchannelmixer-slice-boundary-signed-overflow",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavfilter/colorchannelmixer_template.c",
+      "line_number": 175,
+      "severity": "low",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "ColorChannelMixer's generated planar and packed slice callbacks compute out->height * jobnr and out->height * (jobnr + 1) in signed int. Generic image validation accepts a 1x2,080,410 RGB24 frame, and the public graph thread option accepts 2,065 explicit threads. For job 2,064, UBSan reports the production signed overflow; under ordinary wrapping, the packed callback forms a row pointer before the frame and ASan reports a one-byte read 1,452 bytes before the exact 6,241,230-byte allocation. Exact repair f7368f97b92a0afe8dc8368a4b6749704b740317 replaces all four generated products with the int64-based ff_slice_pos helper and completes the final slice cleanly. Automatic graph threading is capped at 16, so exploitation requires an explicitly extreme thread configuration.",
+      "code_snippet": "const int slice_start = (out->height * jobnr) / nb_jobs; const int slice_end = (out->height * (jobnr+1)) / nb_jobs;",
+      "poc": "Run evaluations/run_ffmpeg_colorchannelmixer_slice_overflow_reproducer.py against the pinned configured tree. It invokes packed RGB24 job 2,064 of 2,065 on a valid 1x2,080,410 frame; UBSan aborts on 2,080,410 * 2,064, ASan observes the pre-frame read, and the exact repaired callback finishes cleanly.",
+      "discovered_by": "sourcehunt:offline-repair-diff-plus-dynamic-proof",
+      "vulnerability_trace": {
+        "summary": "an explicitly large filter thread count makes generated ColorChannelMixer slice products overflow signed int, wrap the final slice start negative, and move row pointers before a valid frame allocation",
+        "steps": [
+          {
+            "file": "libavutil/imgutils.c",
+            "line": 301,
+            "function": "av_image_check_size2",
+            "code_snippet": "if (w==0 || h==0 || ... || stride*(h + 128ULL) >= INT_MAX) return AVERROR(EINVAL);",
+            "note": "The proof's width-one RGB24 geometry passes the generic image-size bound: its three-byte stride plus the 1,024-byte guard, multiplied by height plus 128, is 2,136,712,526, below INT_MAX."
+          },
+          {
+            "file": "libavfilter/avfiltergraph.c",
+            "line": 52,
+            "function": "filtergraph_options",
+            "code_snippet": "{ \"threads\", \"Maximum number of threads\", ..., 0, INT_MAX, ... }",
+            "note": "The public graph option accepts the proof's explicit 2,065-thread setting."
+          },
+          {
+            "file": "libavfilter/vf_colorchannelmixer.c",
+            "line": 454,
+            "function": "filter_frame",
+            "code_snippet": "ff_filter_execute(ctx, s->filter_slice[pc], &td, NULL, FFMIN(outlink->h, ff_filter_get_nb_threads(ctx)));",
+            "note": "A 2,080,410-row output and 2,065 configured threads dispatch job 2,064 of 2,065."
+          },
+          {
+            "file": "libavfilter/colorchannelmixer_template.c",
+            "line": 175,
+            "function": "filter_slice_rgba_packed",
+            "code_snippet": "const int slice_start = (out->height * jobnr) / nb_jobs;",
+            "note": "The mathematical product is 4,293,966,240. UBSan reports signed overflow; two's-complement wrapping yields a negative slice start. The planar callback has the same expression at line 57."
+          },
+          {
+            "file": "libavfilter/colorchannelmixer_template.c",
+            "line": 181,
+            "function": "filter_slice_rgba_packed",
+            "code_snippet": "const uint8_t *srcrow = in->data[0] + slice_start * in->linesize[0];",
+            "note": "The wrapped start places srcrow before the frame, and ASan reports a one-byte read 1,452 bytes before its exact allocation."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/colorchannelmixer_template.c",
+        "start": 45,
+        "end": 190
+      },
+      {
+        "path": "libavfilter/vf_colorchannelmixer.c",
+        "start": 432,
+        "end": 460
+      },
+      {
+        "path": "libavfilter/avfiltergraph.c",
+        "start": 45,
+        "end": 56
+      },
+      {
+        "path": "libavutil/imgutils.c",
+        "start": 287,
+        "end": 306
+      }
+    ]
   }
 ]
