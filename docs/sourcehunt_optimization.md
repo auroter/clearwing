@@ -4330,3 +4330,68 @@ Direct deterministic regeneration reproduces ranks 1693–1716 exactly and seals
 ranks 1717–1740 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1717_1740.json` with SHA-256
 `d3a5acd933eea660486e9e336f11c6d604884495f6aace6cf1df4a13eb9a5bf0`.
+
+### Blind wave 1717–1740 and two OpenSSL peer-identity roots
+
+The wave completed source-bearing work on all 24 exact paths in one pinned
+session. It settled 902 model calls using 8,649,149 input tokens and 171,930
+output tokens, 8,821,079 total, and made 209 raw candidate/finding calls. Its
+single formal output explicitly said that URL decoding was bounded and that no
+vulnerability existed, so offline review rejects that mislabeled negative
+report rather than counting it.
+
+The OpenSSL TLS client enables chain validation for `verify=1`, but its
+identity block is guarded by `!s->numerichost`. A numeric-IP URL consequently
+installs no hostname or IP target, and OpenSSL accepts any certificate chaining
+to a trusted CA. A loopback public-API proof uses a local CA to sign a
+`wrong.example`-only certificate with no IP SAN. OpenSSL accepts the chain and
+independently rejects the certificate for `127.0.0.1`, while pinned FFmpeg
+accepts `tls://127.0.0.1?...verify=1`. Exact repair `83c6922826` binds numeric
+hosts through `X509_VERIFY_PARAM_set1_ip` and explicitly identifies acceptance
+of any publicly trusted certificate for any name.
+
+The pinned OpenSSL DTLS client has an independent identity omission. Its source
+even notes that verification does not check the requested hostname; the path
+enables CA-chain validation and sends SNI but never calls `SSL_set1_host`. A
+second loopback public-API proof targets `dtls://localhost?...verify=1` with the
+same trusted `wrong.example` certificate. OpenSSL independently rejects the
+hostname while pinned FFmpeg completes the DTLS handshake. Later refactor
+`e2eee22f16` removes the independent DTLS setup and routes it through
+`tls_open`, whose nonnumeric client path binds `s->host` with
+`SSL_set1_host`.
+
+The durable artifacts are
+`evaluations/run_ffmpeg_tls_openssl_numeric_ip_verify_reproducer.py` and
+`evaluations/run_ffmpeg_dtls_openssl_hostname_verify_reproducer.py`, with their
+matching C harnesses. Both ignored reports pin commit
+`795bccdaf57772b1803914dee2f32d52776518e2`, record independent OpenSSL identity
+rejections and successful FFmpeg connections, capture the later repairs, and
+report `expected_observed=true`.
+
+The strongest transient memory-safety leads close under concrete contracts.
+DNxUC's `next = i - 7` is intentional cross-buffer parser bookkeeping and its
+minimum minus seven remains inside `AV_INPUT_BUFFER_PADDING_SIZE`. ADTS's
+maximum PCE field counts plus its 255-byte comment remain inside the 320-byte
+destination. Slice threading counts the synchronous caller as the active
+worker removed from the signaled-worker total. XBIN's `fontheight` is an int
+loaded by `avio_r8`, not a negative signed byte. H.264 codec-string extradata
+retains the framework's mandatory zero padding, while A64's positive-size/null
+combination violates the public codec-parameter ownership contract.
+
+The remaining filter, device, and library leads also close. Lagfun and
+MaskedMinMax operate on negotiated matching geometry; NPP's rounded CUDA
+allocation is larger than the processed image. ALSA cannot return more frames
+than `snd_pcm_readi` was asked to fill. Libaom owns and validates the returned
+image planes, VideoToolbox's sequence data is a bounded decoder buffer, and the
+x86 edge kernels inherit caller-allocated borders and stride. Vorbis chapter
+fields are reduced to bounded ints before their 64-byte formatting buffer, and
+the CRC table marker selects the allocation-compatible implementation.
+
+The two roots raise the totals to 126 confirmed root causes and 109 dynamically
+reproduced issues. Historical coverage is 1,740/4,995 (34.83%), with 3,255
+historically ranked files remaining.
+
+Direct deterministic regeneration reproduces ranks 1717–1740 exactly and seals
+ranks 1741–1764 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1741_1764.json` with SHA-256
+`65a6a5af0f738f0ab74967aaf2d8e47d020a027dd8e44840c44155c47ca4cfd1`.

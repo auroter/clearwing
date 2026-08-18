@@ -6905,5 +6905,169 @@
         "end": 299
       }
     ]
+  },
+  {
+    "case_id": "tls-openssl-numeric-ip-peer-identity-bypass",
+    "finding": {
+      "id": "ffmpeg-tls-openssl-numeric-ip-peer-identity-bypass",
+      "finding_type": "improper_certificate_validation",
+      "cwe": "CWE-295",
+      "file": "libavformat/tls_openssl.c",
+      "line_number": 869,
+      "severity": "high",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "The OpenSSL TLS backend enables certificate-chain verification for verify=1 but installs a peer-identity target only when the URL host is nonnumeric. A numeric-IP client therefore verifies that the server certificate chains to a trusted CA without requiring an iPAddress SAN matching the requested address, so any trusted certificate for any name is accepted. A local CA signs a certificate only for wrong.example and with no IP SAN; OpenSSL independently accepts its chain and rejects it for 127.0.0.1, while FFmpeg's public tls://127.0.0.1 URL with verify=1 completes the connection. Exact later repair 83c6922826 binds numeric hosts through X509_VERIFY_PARAM_set1_ip and explicitly identifies acceptance of any publicly trusted certificate for any name.",
+      "code_snippet": "if (s->verify) SSL_CTX_set_verify(...); ... if (!s->listen && !s->numerichost) { ... SSL_set1_host(c->ssl, s->host); }",
+      "poc": "Run evaluations/run_ffmpeg_tls_openssl_numeric_ip_verify_reproducer.py against an OpenSSL-enabled pinned build. Its ignored report records a trusted wrong.example-only certificate, OpenSSL's independent IP-mismatch rejection, FFmpeg's successful public numeric-IP TLS connection with verify=1, the exact repair, and expected_observed=true.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a public numeric-IP TLS URL enables trust-chain verification but skips the OpenSSL peer-identity binding, allowing a trusted certificate for an unrelated name to authenticate the connection",
+        "steps": [
+          {
+            "file": "libavformat/tls.c",
+            "line": 72,
+            "function": "ff_tls_open_underlying",
+            "code_snippet": "if (!c->host && !(c->host = av_strdup(c->underlying_host)))",
+            "note": "The public tls URL propagates its numeric transport host, 127.0.0.1, as the certificate-verification host when no verifyhost override is supplied."
+          },
+          {
+            "file": "libavformat/tls_openssl.c",
+            "line": 858,
+            "function": "tls_open",
+            "code_snippet": "if (s->verify) SSL_CTX_set_verify(c->ctx, SSL_VERIFY_PEER|SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);",
+            "note": "verify=1 asks OpenSSL to validate the server's chain to a trusted CA."
+          },
+          {
+            "file": "libavformat/tls_openssl.c",
+            "line": 869,
+            "function": "tls_open",
+            "code_snippet": "if (!s->listen && !s->numerichost) {",
+            "note": "For a numeric target the entire identity-binding block is skipped, so neither an IP SAN nor any other peer name is checked."
+          },
+          {
+            "file": "libavformat/tls_openssl.c",
+            "line": 872,
+            "function": "tls_open",
+            "code_snippet": "if (!SSL_set1_host(c->ssl, s->host))",
+            "note": "Only nonnumeric clients install the hostname target that OpenSSL enforces during the handshake."
+          },
+          {
+            "file": "libavformat/tls_openssl.c",
+            "line": 884,
+            "function": "tls_open",
+            "code_snippet": "ret = s->listen ? SSL_accept(c->ssl) : SSL_connect(c->ssl);",
+            "note": "The reproduced numeric-IP client accepts a trusted wrong.example-only certificate and completes this handshake despite OpenSSL independently rejecting that certificate for 127.0.0.1."
+          },
+          {
+            "file": "libavformat/tls_openssl.c",
+            "line": 869,
+            "function": "later repair 83c6922826",
+            "code_snippet": "ok = X509_VERIFY_PARAM_set1_ip(SSL_get0_param(c->ssl), addr, ai->ai_family == AF_INET6 ? 16 : 4);",
+            "note": "The exact later security repair runs identity binding for every client and pins numeric hosts to the certificate's binary iPAddress SAN."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/tls.c",
+        "start": 45,
+        "end": 110
+      },
+      {
+        "path": "libavformat/tls_openssl.c",
+        "start": 831,
+        "end": 898
+      }
+    ]
+  },
+  {
+    "case_id": "dtls-openssl-hostname-peer-identity-bypass",
+    "finding": {
+      "id": "ffmpeg-dtls-openssl-hostname-peer-identity-bypass",
+      "finding_type": "improper_certificate_validation",
+      "cwe": "CWE-295",
+      "file": "libavformat/tls_openssl.c",
+      "line_number": 764,
+      "severity": "high",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "The OpenSSL DTLS client enables certificate-chain verification for verify=1 but never installs a peer-hostname verification target. It sends the requested hostname as SNI, which does not authenticate the returned certificate, and then accepts any certificate chaining to a trusted CA. A local CA signs a certificate only for wrong.example; OpenSSL independently accepts its chain and rejects it for localhost, while FFmpeg's public dtls://localhost URL with verify=1 completes the connection. Later refactor e2eee22f16 removes the independent DTLS setup and routes it through tls_open, whose nonnumeric client path binds s->host with SSL_set1_host.",
+      "code_snippet": "/* Note, this doesn't check that the peer certificate actually matches the requested hostname. */ if (s->verify) SSL_CTX_set_verify(...); ... SSL_set_tlsext_host_name(c->ssl, s->host);",
+      "poc": "Run evaluations/run_ffmpeg_dtls_openssl_hostname_verify_reproducer.py against an OpenSSL- and DTLS-enabled pinned build. Its ignored report records a trusted wrong.example-only certificate, OpenSSL's independent localhost-mismatch rejection, FFmpeg's successful public hostname DTLS connection with verify=1, the exact later repair, and expected_observed=true.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a public hostname DTLS URL enables trust-chain verification and sends SNI but installs no peer-identity target, allowing a trusted certificate for an unrelated name to authenticate the connection",
+        "steps": [
+          {
+            "file": "libavformat/tls.c",
+            "line": 55,
+            "function": "ff_tls_open_underlying",
+            "code_snippet": "av_url_split(NULL, 0, NULL, 0, c->underlying_host, sizeof(c->underlying_host), &port, NULL, 0, uri);",
+            "note": "The public dtls://localhost URL supplies a nonnumeric hostname controlled by the connection target."
+          },
+          {
+            "file": "libavformat/tls.c",
+            "line": 72,
+            "function": "ff_tls_open_underlying",
+            "code_snippet": "if (!c->host && !(c->host = av_strdup(c->underlying_host)))",
+            "note": "With no verifyhost override, localhost becomes the intended certificate identity."
+          },
+          {
+            "file": "libavformat/tls_openssl.c",
+            "line": 764,
+            "function": "dtls_start",
+            "code_snippet": "/* Note, this doesn't check that the peer certificate actually matches the requested hostname. */",
+            "note": "The source explicitly records that the independent DTLS path omits requested-hostname authentication."
+          },
+          {
+            "file": "libavformat/tls_openssl.c",
+            "line": 765,
+            "function": "dtls_start",
+            "code_snippet": "if (s->verify) SSL_CTX_set_verify(c->ctx, SSL_VERIFY_PEER|SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);",
+            "note": "verify=1 validates only that the presented certificate chains to a trusted CA."
+          },
+          {
+            "file": "libavformat/tls_openssl.c",
+            "line": 789,
+            "function": "dtls_start",
+            "code_snippet": "if (!s->listen && !s->numerichost) SSL_set_tlsext_host_name(c->ssl, s->host);",
+            "note": "SNI tells the server which certificate to present but does not bind that certificate to localhost; this function contains no SSL_set1_host call."
+          },
+          {
+            "file": "libavformat/tls_openssl.c",
+            "line": 815,
+            "function": "dtls_start",
+            "code_snippet": "ret = dtls_handshake(h);",
+            "note": "The reproduced client completes the DTLS handshake with the trusted wrong.example certificate despite OpenSSL independently rejecting its hostname."
+          },
+          {
+            "file": "libavformat/tls_openssl.c",
+            "line": 898,
+            "function": "later repair e2eee22f16",
+            "code_snippet": "s->is_dtls = 1; return tls_open(h, uri, flags, options);",
+            "note": "The later refactor removes the vulnerable independent setup and routes DTLS through the common client path that calls SSL_set1_host for nonnumeric hosts."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/tls.c",
+        "start": 35,
+        "end": 110
+      },
+      {
+        "path": "libavformat/tls_openssl.c",
+        "start": 741,
+        "end": 829
+      },
+      {
+        "path": "libavformat/tls_openssl.c",
+        "start": 831,
+        "end": 898
+      }
+    ]
   }
 ]
