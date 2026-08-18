@@ -9731,5 +9731,295 @@
         "end": 2350
       }
     ]
+  },
+  {
+    "case_id": "lut3d-x86-height-slice-signed-overflow-oob-read",
+    "finding": {
+      "id": "ffmpeg-lut3d-x86-height-slice-signed-overflow-oob-read",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-190",
+      "file": "libavfilter/x86/vf_lut3d_init.c",
+      "line_number": 53,
+      "severity": "low",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The x86 LUT3D callbacks partition rows with signed-int height-times-job products. A valid planar 16-bit 1x2,080,410 frame and 2,065 explicitly configured graph threads dispatch job 2,064, whose first product is 4,293,966,240. UBSan aborts at the production macro expression. Ordinary wrapping gives slice_start -484 and slice_end 522, and an ASan-instrumented SIMD sink reports the resulting two-byte pre-frame read. Exact repair f7368f97b92a0afe8dc8368a4b6749704b740317 replaces both products with the int64-based ff_slice_pos helper and processes rows 2,079,402 through 2,080,410 cleanly. This x86-only callback is independent of the AEmphasis callback retained from the preceding wave.",
+      "code_snippet": "int slice_start = (in->height * jobnr) / nb_jobs; int slice_end = (in->height * (jobnr+1)) / nb_jobs;",
+      "poc": "Run evaluations/run_ffmpeg_lut3d_slice_overflow_reproducer.py against the pinned configured tree. It forces the production x86 SSE2 wrapper on arm64, records the exact signed overflow under UBSan and the negative-row read under ASan, then verifies the exact ff_slice_pos repair.",
+      "discovered_by": "sourcehunt:terminal-ledger-plus-offline-repair-diff-proof",
+      "vulnerability_trace": {
+        "summary": "an explicitly large filter thread count overflows the x86 LUT3D row-slice product and passes a negative row to the SIMD implementation",
+        "steps": [
+          {
+            "file": "libavutil/imgutils.c",
+            "line": 301,
+            "function": "av_image_check_size2",
+            "code_snippet": "stride*(h + 128ULL) >= INT_MAX",
+            "note": "With planar 16-bit width one, height 2,080,410 passes the generic image-size and stride checks."
+          },
+          {
+            "file": "libavfilter/avfiltergraph.c",
+            "line": 52,
+            "function": "filtergraph_options",
+            "code_snippet": "{ \"threads\", \"Maximum number of threads\", ..., 0, INT_MAX, ... }",
+            "note": "The public graph option accepts 2,065 filter threads."
+          },
+          {
+            "file": "libavfilter/vf_lut3d.c",
+            "line": 1187,
+            "function": "filter_frame",
+            "code_snippet": "FFMIN(outlink->h, ff_filter_get_nb_threads(ctx))",
+            "note": "The frame height exceeds the configured thread count, so the framework dispatches job 2,064."
+          },
+          {
+            "file": "libavfilter/x86/vf_lut3d_init.c",
+            "line": 53,
+            "function": "interp_tetrahedral_p16_sse2",
+            "code_snippet": "int slice_start = (in->height * jobnr) / nb_jobs;",
+            "note": "UBSan reports 2,080,410 times 2,064 overflowing signed int. Wrapping and truncating division produce slice_start -484."
+          },
+          {
+            "file": "libavfilter/x86/vf_lut3d_init.c",
+            "line": 55,
+            "function": "interp_tetrahedral_p16_sse2",
+            "code_snippet": "ff_interp_tetrahedral_p16_sse2(..., slice_start, slice_end, ...);",
+            "note": "The negative row reaches the SIMD implementation. The proof sink reports a two-byte read before the frame, while the exact repair computes rows 2,079,402 through 2,080,410."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/x86/vf_lut3d_init.c",
+        "start": 20,
+        "end": 95
+      },
+      {
+        "path": "libavfilter/vf_lut3d.c",
+        "start": 1175,
+        "end": 1195
+      },
+      {
+        "path": "libavfilter/avfiltergraph.c",
+        "start": 44,
+        "end": 60
+      },
+      {
+        "path": "libavutil/imgutils.c",
+        "start": 289,
+        "end": 320
+      },
+      {
+        "path": "libavfilter/filters.h",
+        "start": 745,
+        "end": 770
+      }
+    ]
+  },
+  {
+    "case_id": "jpeg2000-cleanup-pass-negative-shift",
+    "finding": {
+      "id": "ffmpeg-jpeg2000-cleanup-pass-negative-shift",
+      "finding_type": "integer_overflow",
+      "cwe": "CWE-190",
+      "file": "libavcodec/jpeg2000dec.c",
+      "line_number": 1960,
+      "severity": "low",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "JPEG2000 codeblock decoding explicitly accepts an internal bpno of -1 and invokes the cleanup pass with bpno + 1, or zero. decode_clnpass then computes 3 << (bpno - 1), shifting by -1. A one-pixel, one-pass codeblock with nonzerobits 1 and M_b 31 reaches this exact domain, and UBSan reports the negative shift at jpeg2000dec.c:1960. Exact repair 59367afc3d4d86dbe2123c5ff750be7f54f6da7a uses (3u << bpno) >> 1 and decodes the same codeblock cleanly; the repair explicitly identifies an integer overflow.",
+      "code_snippet": "int mask = 3 << (bpno - 1), y0, x, y, runlen, dec;",
+      "poc": "Run evaluations/run_ffmpeg_jpeg2000_integer_state_reproducer.py against the pinned configured tree. The cleanup-mask mode constructs a one-pixel codeblock whose accepted internal bpno is -1; UBSan reports shift exponent -1 and the exact repaired expression completes cleanly.",
+      "discovered_by": "sourcehunt:offline-repair-diff-plus-dynamic-proof",
+      "vulnerability_trace": {
+        "summary": "an accepted terminal JPEG2000 bitplane is incremented to zero for the cleanup pass, whose mask expression subtracts one again and shifts by a negative exponent",
+        "steps": [
+          {
+            "file": "libavcodec/jpeg2000dec.c",
+            "line": 2024,
+            "function": "decode_cblk",
+            "code_snippet": "bpno = cblk->nonzerobits - 1 + 31 - M_b - 1 - roi_shift;",
+            "note": "For nonzerobits 1, M_b 31, and zero ROI shift, the internal bitplane is -1."
+          },
+          {
+            "file": "libavcodec/jpeg2000dec.c",
+            "line": 2043,
+            "function": "decode_cblk",
+            "code_snippet": "if (bpno < -1 || bpno > 29)",
+            "note": "The decoder deliberately accepts -1 as its lower endpoint."
+          },
+          {
+            "file": "libavcodec/jpeg2000dec.c",
+            "line": 2060,
+            "function": "decode_cblk",
+            "code_snippet": "decode_clnpass(s, t1, width, height, bpno + 1, ...);",
+            "note": "The cleanup pass therefore receives zero."
+          },
+          {
+            "file": "libavcodec/jpeg2000dec.c",
+            "line": 1960,
+            "function": "decode_clnpass",
+            "code_snippet": "int mask = 3 << (bpno - 1);",
+            "note": "UBSan reports shift exponent -1. The exact unsigned repair preserves the intended half-bit mask without undefined behavior."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/jpeg2000dec.c",
+        "start": 1950,
+        "end": 2070
+      },
+      {
+        "path": "libavcodec/jpeg2000dec.c",
+        "start": 2240,
+        "end": 2310
+      }
+    ]
+  },
+  {
+    "case_id": "jpeg2000-roi-reconstruction-signed-overflow",
+    "finding": {
+      "id": "ffmpeg-jpeg2000-roi-reconstruction-signed-overflow",
+      "finding_type": "integer_overflow",
+      "cwe": "CWE-190",
+      "file": "libavcodec/jpeg2000dec.c",
+      "line_number": 2111,
+      "severity": "low",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "JPEG2000 ROI reconstruction left-shifts a signed int32_t coefficient by the codestream's ROI shift. A valid one-pixel cleanup pass with M_b zero, ROI shift one, and internal bpno 29 reconstructs 0x60000000; the ROI predicate accepts it and signed shifting by one exceeds INT32_MAX. UBSan reports the exact 1,610,612,736 shift at jpeg2000dec.c:2111. Exact repair 90a285ca782ebe633ba40ab123b6ff0cde9085a8 casts the coefficient to uint32_t before shifting and produces 0xC0000000 cleanly; the upstream commit cites the matching OSS-Fuzz testcase.",
+      "code_snippet": "if (roi_shift && (((uint32_t)val & ~mask) == 0)) val <<= roi_shift;",
+      "poc": "Run evaluations/run_ffmpeg_jpeg2000_integer_state_reproducer.py against the pinned configured tree. The roi-shift mode decodes a one-pixel, one-pass codeblock to 0x60000000; UBSan reports its signed shift by one and the exact unsigned-cast repair returns 0xC0000000 cleanly.",
+      "discovered_by": "sourcehunt:offline-repair-diff-plus-dynamic-proof",
+      "vulnerability_trace": {
+        "summary": "a codestream-selected ROI shift moves an accepted positive reconstruction coefficient through the sign bit using a signed left shift",
+        "steps": [
+          {
+            "file": "libavcodec/jpeg2000dec.c",
+            "line": 686,
+            "function": "get_rgn",
+            "code_snippet": "s->roi_shift[compno] = v;",
+            "note": "The RGN marker supplies the component ROI shift."
+          },
+          {
+            "file": "libavcodec/jpeg2000dec.c",
+            "line": 2024,
+            "function": "decode_cblk",
+            "code_snippet": "bpno = cblk->nonzerobits - 1 + 31 - M_b - 1 - roi_shift;",
+            "note": "The proof domain yields internal bpno 29, and its cleanup-pass mask reconstructs magnitude 0x60000000."
+          },
+          {
+            "file": "libavcodec/jpeg2000dec.c",
+            "line": 2108,
+            "function": "decode_cblk",
+            "code_snippet": "val &= INT32_MAX;",
+            "note": "Reconstruction retains the positive 1,610,612,736 magnitude in signed int32_t."
+          },
+          {
+            "file": "libavcodec/jpeg2000dec.c",
+            "line": 2111,
+            "function": "decode_cblk",
+            "code_snippet": "val <<= roi_shift;",
+            "note": "Shifting by one has mathematical result 3,221,225,472. UBSan aborts; the exact uint32_t repair produces 0xC0000000 cleanly."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/jpeg2000dec.c",
+        "start": 660,
+        "end": 705
+      },
+      {
+        "path": "libavcodec/jpeg2000dec.c",
+        "start": 2020,
+        "end": 2120
+      },
+      {
+        "path": "libavcodec/jpeg2000dec.c",
+        "start": 2240,
+        "end": 2310
+      }
+    ]
+  },
+  {
+    "case_id": "jpeg2000-stale-ppm-cross-frame-null-pointer",
+    "finding": {
+      "id": "ffmpeg-jpeg2000-stale-ppm-cross-frame-null-pointer",
+      "finding_type": "null_pointer_dereference",
+      "cwe": "CWE-476",
+      "file": "libavcodec/jpeg2000dec.c",
+      "line_number": 2443,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "JPEG2000 frame cleanup frees the accumulated PPM packed-header buffer but fails to clear has_ppm and five other header-derived fields. A first packet containing a syntactically valid PPM marker then failing for missing dimensions runs cleanup with has_ppm still one and packed_headers NULL. Decoding an ordinary valid second codestream on the same AVCodecContext takes the stale PPM branch and initializes a GetByteContext from NULL; UBSan reports null-pointer arithmetic in bytestream2_init. Exact repair 6631bbc5d47082a6212e3c82fce0215fce2dbac6 resets roi_shift, has_ppm, isHT, precision, colour_space, and pal8, after which the same second frame decodes as 1x1 cleanly. The upstream commit explicitly identifies a NULL pointer dereference.",
+      "code_snippet": "av_freep(&s->packed_headers); ... /* has_ppm remains set */",
+      "poc": "Run evaluations/run_ffmpeg_jpeg2000_integer_state_reproducer.py against the pinned configured tree. cleanup-two-frame sends a PPM-bearing malformed first packet and then an embedded valid one-pixel codestream through one decoder context; vulnerable cleanup reaches null bytestream arithmetic, while the exact six-field reset decodes frame two.",
+      "discovered_by": "sourcehunt:offline-repair-diff-plus-dynamic-proof",
+      "vulnerability_trace": {
+        "summary": "one frame sets PPM state and frees its backing storage during error cleanup, then an ordinary next frame trusts the stale flag and constructs a byte stream from NULL",
+        "steps": [
+          {
+            "file": "libavcodec/jpeg2000dec.c",
+            "line": 998,
+            "function": "get_ppm",
+            "code_snippet": "s->has_ppm = 1;",
+            "note": "The first packet's PPM marker sets persistent header-derived state."
+          },
+          {
+            "file": "libavcodec/jpeg2000dec.c",
+            "line": 2443,
+            "function": "jpeg2000_dec_cleanup",
+            "code_snippet": "av_freep(&s->packed_headers);",
+            "note": "Error cleanup frees and nulls the packed-header pointer but does not clear has_ppm."
+          },
+          {
+            "file": "libavcodec/jpeg2000dec.c",
+            "line": 2598,
+            "function": "jpeg2000_read_main_headers",
+            "code_snippet": "if (s->has_ppm) bytestream2_init(&s->packed_headers_stream, s->packed_headers, s->packed_headers_size);",
+            "note": "The normal second frame reaches SOT with stale has_ppm one, a NULL packed_headers pointer, and size zero."
+          },
+          {
+            "file": "libavcodec/bytestream.h",
+            "line": 144,
+            "function": "bytestream2_init",
+            "code_snippet": "g->buffer_end = buf + buf_size;",
+            "note": "UBSan reports applying zero offset to a null pointer. The exact reset clears has_ppm and the second one-pixel frame decodes cleanly."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/jpeg2000dec.c",
+        "start": 980,
+        "end": 1010
+      },
+      {
+        "path": "libavcodec/jpeg2000dec.c",
+        "start": 2420,
+        "end": 2465
+      },
+      {
+        "path": "libavcodec/jpeg2000dec.c",
+        "start": 2470,
+        "end": 2660
+      },
+      {
+        "path": "libavcodec/jpeg2000dec.c",
+        "start": 2860,
+        "end": 2930
+      },
+      {
+        "path": "libavcodec/bytestream.h",
+        "start": 130,
+        "end": 160
+      }
+    ]
   }
 ]

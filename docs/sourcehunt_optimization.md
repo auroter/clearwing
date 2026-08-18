@@ -5866,3 +5866,88 @@ Direct deterministic regeneration reproduces ranks 2245–2268 exactly and
 seals ranks 2269–2292 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_2269_2292.json` with SHA-256
 `fcc66e5467a5284aa62ea11bc6f175b2be0e31679174e266088169712ce4f084`.
+
+### Blind wave 2269–2292 and four repair-confirmed roots
+
+The wave completed source-bearing work on all 24 exact paths in one pinned
+session. It settled 721 model calls using 6,503,746 input tokens and 147,394
+output tokens, 6,651,140 total, and made 102 raw candidate calls. It submitted
+no formal findings.
+
+Offline repair review first recovered an independent x86 LUT3D slice-product
+root. A valid planar 16-bit 1x2,080,410 frame and 2,065 explicitly configured
+graph threads dispatch job 2,064. The production row product is 4,293,966,240,
+which UBSan reports at the x86 callback macro. Ordinary wrapping passes
+`slice_start=-484` and `slice_end=522` to the SIMD routine; an ASan-instrumented
+SIMD sink reports the resulting two-byte pre-frame read. Exact repair
+`f7368f97b92a0afe8dc8368a4b6749704b740317` uses the int64-based
+`ff_slice_pos()` helper and processes rows 2,079,402 through 2,080,410 cleanly.
+This is a separate x86 callback implementation from the preceding AEmphasis
+root despite sharing the same broad repair.
+
+Three independent JPEG2000 repair-oracle roots also survive exact-source proof:
+
+- Codeblock decoding accepts internal `bpno == -1` and invokes the cleanup pass
+  with `bpno + 1`, or zero. `decode_clnpass()` then evaluates
+  `3 << (bpno - 1)`. A one-pixel, one-pass codeblock reaches the exact domain,
+  and UBSan reports shift exponent -1. Repair
+  `59367afc3d4d86dbe2123c5ff750be7f54f6da7a` uses
+  `(3u << bpno) >> 1`, explicitly identifies an integer overflow, and decodes
+  the same codeblock cleanly.
+- ROI reconstruction shifts a signed `int32_t` coefficient by the codestream's
+  ROI shift. A one-pixel cleanup pass with `M_b=0`, ROI shift one, and internal
+  bitplane 29 reconstructs `0x60000000`; UBSan reports its signed shift by one.
+  Repair `90a285ca782ebe633ba40ab123b6ff0cde9085a8` casts to `uint32_t`, produces
+  `0xC0000000` cleanly, and cites the matching OSS-Fuzz testcase.
+- Frame cleanup frees PPM packed-header storage without clearing `has_ppm` or
+  five other header-derived fields. A PPM-bearing first packet that fails for
+  missing dimensions leaves `has_ppm=1` and `packed_headers=NULL`. An ordinary
+  valid second codestream on the same decoder enters the stale PPM branch, and
+  UBSan reports null-pointer arithmetic in `bytestream2_init()`. Repair
+  `6631bbc5d47082a6212e3c82fce0215fce2dbac6` resets `roi_shift`, `has_ppm`,
+  `isHT`, `precision`, `colour_space`, and `pal8`; the same second frame then
+  decodes as 1x1 cleanly. The repair explicitly identifies a NULL pointer
+  dereference.
+
+The durable artifacts are
+`ffmpeg_lut3d_slice_overflow_reproducer.c`,
+`run_ffmpeg_lut3d_slice_overflow_reproducer.py`,
+`ffmpeg_jpeg2000_integer_state_reproducer.c`, and
+`run_ffmpeg_jpeg2000_integer_state_reproducer.py` under `evaluations/`. Their
+ignored reports pin commit `795bccdaf57772b1803914dee2f32d52776518e2`, record
+all sanitizer failures and exact repaired replays, and both have
+`expected_observed=true`.
+
+The terminal LUT3D candidate noticed the slice wrapper but pursued nonexistent
+non-divisible-height SIMD overrun rather than signed multiplication. The
+JPEG2000 trajectory pursued the bounded two-element HT pass-length array and
+missed all three repaired roots. Recall is therefore 0/4 from terminal ledgers
+and 0/4 from formal findings.
+
+The remaining candidates close under concrete bounds, ownership, and API
+contracts. CBS JPEG permits at most four DQT tables and guards DHT indices
+against its eight-table array. MPEG-4 Audio's four-bit sample-rate index exactly
+fits its 16-entry table, and channel indices are checked. Blu-ray PCM's padded
+source channel is skipped for odd output layouts. CBS VP9 exposes only its frame
+unit type. SubViewer reallocates a packet-pointer array rather than packet
+objects, and Luodat's new stream index is the old stream count while packet
+sizes reject or reduce safely. NIST defaults malformed channel counts to zero
+and rejects absent block alignment; Y41P is dominated by generic image-size
+validation. JPEG2000 HT pass lengths use only indices zero and one.
+
+Superequalizer's buffers exactly match its window and table geometry. XMA's
+candidate affects duration reporting only, and YOP allocation equals its two
+writes. `av_rescale` products remain within their proven integer domains.
+LoongArch HEVC kernels receive codec-owned block geometry and edge padding. RTP
+reorder nodes take ownership of the supplied exact-length buffers and the queue
+is drained when it reaches its configured bound. Codec-parameter side-data
+counts remain paired with their owned arrays through the side-data helpers. VP8
+parser dimensions come from the same keyframe header and face downstream image
+validation. Vulkan configuration borrows the input link's retained hardware
+frames reference only during the synchronous config lifecycle, matching the
+generic Vulkan filter path; initialized hardware frames also guarantee a valid
+software pixel format descriptor.
+
+The four roots raise the totals to 166 confirmed root causes and 144 dynamically
+reproduced issues. Historical coverage is 2,292/4,995 (45.89%), with 2,703
+historically ranked files remaining.
