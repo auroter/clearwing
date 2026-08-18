@@ -3965,3 +3965,114 @@ Direct deterministic regeneration reproduces ranks 1573–1596 exactly and seals
 ranks 1597–1620 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1597_1620.json` with SHA-256
 `709c7efda0610a1f58a3c97987dc9f4e90ac4ab034334e8f8e0704f90d493658`.
+
+### Blind wave 1597–1620 and two dynamically reproduced roots
+
+The wave completed source-bearing work on all 24 exact paths in one session. It
+settled 879 model calls using 7,827,174 input tokens and 208,921 output tokens,
+8,036,095 total, and made 237 raw candidate/finding calls. The online scaffold
+retained no formal finding; offline invariant review recovered two exact later
+repairs and reproduced both roots.
+
+Codecview draws every `AVVideoBlockParams` rectangle without intersecting it
+with the visible frame. The public side-data API can describe a block beginning
+at `src_y == height`, while a uniquely owned refcounted frame retains exact-size
+planes through the public buffer source and writable-input path. A 4x4 YUV420P
+frame with an exact 16-byte luma plane and one block at `(0,4)+1x1` makes ASan
+report a one-byte write immediately after that allocation. Exact later repair
+`c568f40597` clamps blocks to the visible region.
+
+MWSC unconditionally constructs a previous-frame byte reader on its first
+packet, when the reference frame's data pointer and linesize are both zero. A
+public 1x1 packet whose zlib stream expands to `01 00 00 ff` selects a one-pixel
+previous-frame copy. UBSan aborts in `bytestream2_init` for applying a zero
+offset to the null pointer. Exact OSS-Fuzz repair `ba825ce85f` conditionally
+initializes the reader and rejects a copy run when the reference is absent.
+
+The durable artifacts are
+`evaluations/run_ffmpeg_codecview_block_geometry_reproducer.py` and
+`evaluations/run_ffmpeg_mwsc_missing_reference_reproducer.py`, with their
+matching C harnesses. Their ignored reports pin the campaign commit and record
+`expected_observed=true`.
+
+The remaining candidates close under exact contracts. Three-dimensional STR's
+huge unsigned chunk length narrows to a negative `int` rejected by packet
+growth. CMS receives fixed positive LUT dimensions with matching embedded
+arrays. ProRes has all seven quantization matrices, including the codec-default
+index. Dolby E derives at most eight channels from fixed tables, caps converted
+words at its 3,072-byte buffer, and checks remaining input before every skip.
+The decode_simple early-return leak is bounded to one developer-tool invocation
+and process exit.
+
+Packet padding covers DCA's speculative readers and the examined RKA edge;
+codec-owned allocations cover WCMV, Snow DWT, V210, and the MIPS helpers. The
+remaining filter, Vulkan, swscale, ALSA, and bitstream-filter leads retain
+negotiated geometry, fixed input counts, or validated dimensions. The
+user-supplied H.264 slice-table chain remains independent corroboration of
+`h264-slice-sentinel-collision` and is not counted again.
+
+The two roots raise the totals to 110 confirmed root causes and 96 dynamically
+reproduced issues. Coverage is 1,620/4,995 (32.43%), with 3,375 historically
+ranked files remaining.
+
+Direct deterministic regeneration reproduces ranks 1597–1620 exactly and seals
+ranks 1621–1644 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1621_1644.json` with SHA-256
+`ecd13e777f50246eec454b31a8fcafa350d3cf5449f1e7906c6c1948e5e23385`.
+
+### Blind wave 1621–1644 and one reproduced RTP/H.263 variant
+
+The wave completed source-bearing work on all 24 exact paths in one session. It
+settled 860 model calls using 8,035,936 input tokens and 159,596 output tokens,
+8,195,532 total, and made 219 raw candidate/finding calls. The online scaffold
+retained no formal finding. Offline invariant review reproduced one sibling
+variant of an existing root but recovered no new root cause.
+
+The generic RTP muxer accepts any packet size greater than its 12-byte outer
+header. With public `packet_size=13`, it therefore advertises one byte of payload
+capacity. The H.263 packetizer reserves two additional payload-header bytes and
+computes `FFMIN(max_packet_size - 2, size)` as signed -1. Its split-marker path
+preserves that value, and `memcpy` converts it to `SIZE_MAX`. A public RTP muxer
+and valid padded four-byte H.263 packet make ASan report
+`negative-size-param (size=-1)` directly in `ff_rtp_send_h263`.
+
+`evaluations/run_ffmpeg_rtp_h263_rfc4629_small_packet_reproducer.py` and its
+matching C harness are the durable proof. The ignored report pins the campaign
+commit, records the accepted 13-byte packet size and one-byte capacity, and
+reports `expected_observed=true`. This is the RFC4629 sibling of the already
+counted RFC2190 undersized-packet failure: both subtract an H.263-specific
+payload header from the generic RTP capacity and pass a negative length to
+`memcpy`, so the corpus retains one root with two distinct proof harnesses.
+
+The ordinary codec and demuxer leads close under allocation or framing
+invariants. PTX's codec-owned linesize covers exactly `width * 2`; Dirac and VVC
+DSP paths receive padded codec frames; and MQC's `raw` field is an integer mode
+flag, not the unrelated local pointer found by the model. SAMI and JACOsub work
+from terminated copies or packet padding, TTML's allocation includes its full
+signature base, and ProRes metadata checks 28 bytes before writing offsets
+22–24. ASF's UTF-16 readers cannot subtract more than their remaining length,
+while AEA and VPK packet loops remain self-consistent under their validated
+channel and block products.
+
+The filter leads also close. GBlur allocates aligned full-resolution luma
+geometry, which dominates every subsampled plane; BlackDetect reduces through
+an explicit 16-slot modulo; and Delogo, ACrusher, and Deesser retain negotiated
+frame/sample bounds. AFDelaySrc can emit IEEE-754 infinity or NaN for a chosen
+coefficient configuration, but floating division does not trap under the
+supported runtime and does not escape its allocated sample plane. GraphDump is
+text-only.
+
+Finally, AVBufferPool's outstanding-buffer reference keeps its pool alive;
+thread-queue index/data desynchronization requires an allocation failure and
+does not create an allocation escape; and PulseAudio's typed control-message
+payload is a public caller contract rather than media-controlled data. The RTP
+resynchronization lookahead remains inside mandatory packet padding.
+
+Totals therefore remain 110 confirmed root causes and 96 dynamically
+reproduced issues. Coverage is 1,644/4,995 (32.91%), with 3,351 historically
+ranked files remaining.
+
+Direct deterministic regeneration reproduces ranks 1621–1644 exactly and seals
+ranks 1645–1668 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1645_1668.json` with SHA-256
+`f20f5239ff8e8e9b62c67e07571a534650f6e4107dba417f99669fecd4e89369`.

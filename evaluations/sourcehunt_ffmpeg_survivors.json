@@ -1081,12 +1081,12 @@
       "severity": "high",
       "confidence": "high",
       "evidence_level": "crash_reproduced",
-      "description": "The RTP muxer accepts every packet sink larger than its 12-byte common header, but RFC2190 H.263 reserves another eight bytes and subtracts them from the remaining payload capacity without checking a codec-specific minimum. A public muxer configured with a valid 13-byte packet sink therefore has one payload byte and derives a fragment length of -7. The resynchronization search preserves that negative length, and mode-B packetization passes it to memcpy, where ASan reports negative-size-param on both sealed snapshots.",
+      "description": "The RTP muxer accepts every packet sink larger than its 12-byte common header, but H.263 packetizers reserve additional codec-specific payload headers without checking their own minimum. A public muxer configured with a valid 13-byte packet sink therefore has one payload byte. RFC2190 derives a fragment length of -7; its resynchronization search preserves that value and mode-B packetization passes it to memcpy. The sibling RFC4629 path independently derives -1 and reaches its memcpy. ASan reports negative-size-param for both variants of the same undersized-RTP-payload root.",
       "code_snippet": "len = FFMIN(s->max_payload_size - 8, size); ... memcpy(s->buf + 8, buf, len);",
-      "poc": "Build and run evaluations/ffmpeg_rtp_h263_small_packet_reproducer.c with evaluations/run_ffmpeg_rtp_h263_small_packet_reproducer.py against either sealed snapshot.",
+      "poc": "Build and run evaluations/ffmpeg_rtp_h263_small_packet_reproducer.c with evaluations/run_ffmpeg_rtp_h263_small_packet_reproducer.py for RFC2190. The sibling evaluations/ffmpeg_rtp_h263_rfc4629_small_packet_reproducer.c and matching runner reproduce the RFC4629 size=-1 variant.",
       "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
       "vulnerability_trace": {
-        "summary": "a packet size valid under RTP's common-header check is smaller than the RFC2190 payload header, so subtracting the codec header creates a negative fragment length that reaches memcpy",
+        "summary": "a packet size valid under RTP's common-header check is smaller than H.263's codec-specific payload headers, so subtracting either header creates a negative fragment length that reaches memcpy",
         "steps": [
           {"file": "libavformat/rtpenc.c", "line": 155, "function": "rtp_write_header", "code_snippet": "if (s1->packet_size <= 12) return AVERROR(EIO);", "note": "A 13-byte packet sink is explicitly accepted by the common RTP initialization check."},
           {"file": "libavformat/rtpenc.c", "line": 163, "function": "rtp_write_header", "code_snippet": "s->max_payload_size = s1->packet_size - 12;", "note": "The accepted sink leaves max_payload_size equal to one."},
@@ -5820,6 +5820,154 @@
         "path": "libavutil/mem.c",
         "start": 98,
         "end": 153
+      }
+    ]
+  },
+  {
+    "case_id": "codecview-unclamped-block-geometry-oob-write",
+    "finding": {
+      "id": "ffmpeg-codecview-unclamped-block-geometry-oob-write",
+      "finding_type": "out_of_bounds_write",
+      "cwe": "CWE-787",
+      "file": "libavfilter/vf_codecview.c",
+      "line_number": 269,
+      "severity": "high",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The codecview filter trusts every AVVideoBlockParams rectangle and derives its luma pointer directly from src_y without intersecting the block with the visible frame. The public video-encoding-parameters side-data API permits a block to begin outside that visible geometry, while a uniquely owned refcounted frame can retain exact-size planes through the public buffer source and codecview's writable-input path. In the durable 4x4 YUV420P proof, a block at (0,4) with size 1x1 makes draw_block_rectangle write one byte immediately after the exact 16-byte luma allocation, and ASan aborts. Exact later repair c568f40597 clamps every rectangle to the visible frame before drawing.",
+      "code_snippet": "uint8_t *buf = frame->data[0] + b->src_y * stride; draw_block_rectangle(buf, b->src_x, b->src_y, b->w, b->h, stride, 100);",
+      "poc": "Run evaluations/run_ffmpeg_codecview_block_geometry_reproducer.py against an ASan-enabled build of the pinned tree with codecview enabled. Its ignored report records the 4x4 frame, exact 16-byte luma plane, block (0,4)+1x1, one-byte heap write at offset 16, and expected_observed=true.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "an encoder-parameter block outside the visible frame is converted directly into a luma pointer, so codecview draws through an exact-size public frame allocation",
+        "steps": [
+          {
+            "file": "libavutil/video_enc_params.c",
+            "line": 58,
+            "function": "av_video_enc_params_create_side_data",
+            "code_snippet": "av_video_enc_params_create_side_data(AVFrame *frame, enum AVVideoEncParamsType type, unsigned int nb_blocks)",
+            "note": "The public API creates the side-data record used by the proof; its AVVideoBlockParams geometry is not restricted to the visible frame."
+          },
+          {
+            "file": "libavfilter/buffersrc.c",
+            "line": 250,
+            "function": "av_buffersrc_add_frame_flags",
+            "code_snippet": "if (refcounted && !(flags & AV_BUFFERSRC_FLAG_KEEP_REF)) { ... av_frame_move_ref(copy, frame); }",
+            "note": "The public buffer source moves the uniquely owned 4x4 frame, preserving its exact 16-byte luma allocation and four-byte stride."
+          },
+          {
+            "file": "libavfilter/avfilter.c",
+            "line": 1046,
+            "function": "filter_frame_framed",
+            "code_snippet": "if (dst->flags & AVFILTERPAD_FLAG_NEEDS_WRITABLE) ff_inlink_make_frame_writable(link, &frame);",
+            "note": "Because the moved frame remains writable, codecview's writable-input requirement does not replace the tight backing plane."
+          },
+          {
+            "file": "libavfilter/vf_codecview.c",
+            "line": 269,
+            "function": "filter_frame",
+            "code_snippet": "uint8_t *buf = frame->data[0] + b->src_y * stride;",
+            "note": "For src_y equal to height, this forms a pointer exactly one row after the visible and allocated luma plane."
+          },
+          {
+            "file": "libavfilter/vf_codecview.c",
+            "line": 213,
+            "function": "draw_block_rectangle",
+            "code_snippet": "buf[x] = color;",
+            "note": "The first horizontal-border store writes one byte after the 16-byte allocation; ASan reproduces the heap overflow."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/vf_codecview.c",
+        "start": 210,
+        "end": 275
+      },
+      {
+        "path": "libavfilter/buffersrc.c",
+        "start": 220,
+        "end": 268
+      },
+      {
+        "path": "libavutil/video_enc_params.c",
+        "start": 24,
+        "end": 80
+      }
+    ]
+  },
+  {
+    "case_id": "mwsc-missing-reference-null-pointer-ub",
+    "finding": {
+      "id": "ffmpeg-mwsc-missing-reference-null-pointer-ub",
+      "finding_type": "null_pointer_dereference",
+      "cwe": "CWE-476",
+      "file": "libavcodec/mwsc.c",
+      "line_number": 131,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The MWSC decoder unconditionally initializes a previous-frame byte reader from prev_frame->data[0], even on the first packet when that AVFrame has no backing data. A zlib-expanded copy run (run 255) then consumes that reader instead of rejecting the missing reference. The public first-packet 1x1 proof expands to bytes 01 00 00 ff and makes bytestream2_init apply a zero offset to the null data pointer; UBSan aborts at bytestream.h:144 before the decoder can silently synthesize a P-frame from zeros. Exact later OSS-Fuzz repair ba825ce85f initializes the reader only when the reference exists and makes the copy branch reject a null reader.",
+      "code_snippet": "bytestream2_init(&gbp, s->prev_frame->data[0], avctx->height * s->prev_frame->linesize[0]); ... bytestream2_seek(gbp, pos, SEEK_SET);",
+      "poc": "Run evaluations/run_ffmpeg_mwsc_missing_reference_reproducer.py against an ASan/UBSan-enabled build of the pinned tree with the MWSC decoder and zlib enabled. Its ignored report records the first 1x1 packet, run-255 previous-frame copy, null-pointer arithmetic UBSan abort, and expected_observed=true.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a first-frame copy run reaches MWSC's unconditionally constructed previous-frame reader even though its data pointer and linesize are both zero",
+        "steps": [
+          {
+            "file": "libavcodec/mwsc.c",
+            "line": 165,
+            "function": "decode_init",
+            "code_snippet": "s->prev_frame = av_frame_alloc();",
+            "note": "Decoder initialization creates only an empty AVFrame; before the first successful decode, data[0] is null and linesize[0] is zero."
+          },
+          {
+            "file": "libavcodec/mwsc.c",
+            "line": 121,
+            "function": "decode_frame",
+            "code_snippet": "ret = inflate(zstream, Z_FINISH);",
+            "note": "The public compressed packet expands successfully to one previous-frame-copy command."
+          },
+          {
+            "file": "libavcodec/mwsc.c",
+            "line": 131,
+            "function": "decode_frame",
+            "code_snippet": "bytestream2_init(&gbp, s->prev_frame->data[0], avctx->height * s->prev_frame->linesize[0]);",
+            "note": "The pinned decoder constructs a byte reader from the missing reference without checking data[0]."
+          },
+          {
+            "file": "libavcodec/bytestream.h",
+            "line": 144,
+            "function": "bytestream2_init",
+            "code_snippet": "g->buffer_end = buf + buf_size;",
+            "note": "With buf null and buf_size zero, UBSan deterministically reports applying zero offset to a null pointer."
+          },
+          {
+            "file": "libavcodec/mwsc.c",
+            "line": 68,
+            "function": "rle_uncompress",
+            "code_snippet": "bytestream2_seek(gbp, pos, SEEK_SET); ... bytestream2_get_le24(gbp)",
+            "note": "Run 255 explicitly selects the missing previous-frame reader; the later repair rejects this branch when no reader exists."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/mwsc.c",
+        "start": 39,
+        "end": 146
+      },
+      {
+        "path": "libavcodec/mwsc.c",
+        "start": 152,
+        "end": 193
+      },
+      {
+        "path": "libavcodec/bytestream.h",
+        "start": 137,
+        "end": 164
       }
     ]
   }
