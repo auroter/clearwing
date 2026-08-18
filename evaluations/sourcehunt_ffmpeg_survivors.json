@@ -1081,18 +1081,20 @@
       "severity": "high",
       "confidence": "high",
       "evidence_level": "crash_reproduced",
-      "description": "The RTP muxer accepts every packet sink larger than its 12-byte common header, but H.263 packetizers reserve additional codec-specific payload headers without checking their own minimum. A public muxer configured with a valid 13-byte packet sink therefore has one payload byte. RFC2190 derives a fragment length of -7; its resynchronization search preserves that value and mode-B packetization passes it to memcpy. The sibling RFC4629 path independently derives -1 and reaches its memcpy. ASan reports negative-size-param for both variants of the same undersized-RTP-payload root.",
+      "description": "The RTP muxer accepts every packet sink larger than its 12-byte common header, but codec packetizers reserve additional payload headers without checking their own minimum. A public muxer configured with a valid 13-byte packet sink therefore has one payload byte. H.263 RFC2190 derives a fragment length of -7 and RFC4629 derives -1; their resynchronization paths preserve those values before memcpy. H.261 independently subtracts its four-byte header, preserves -3 through its reverse marker search, and reaches memcpy through the public muxer. ASan reports negative-size-param for all three variants of the same undersized-RTP-payload root.",
       "code_snippet": "len = FFMIN(s->max_payload_size - 8, size); ... memcpy(s->buf + 8, buf, len);",
-      "poc": "Build and run evaluations/ffmpeg_rtp_h263_small_packet_reproducer.c with evaluations/run_ffmpeg_rtp_h263_small_packet_reproducer.py for RFC2190. The sibling evaluations/ffmpeg_rtp_h263_rfc4629_small_packet_reproducer.c and matching runner reproduce the RFC4629 size=-1 variant.",
+      "poc": "Build and run evaluations/ffmpeg_rtp_h263_small_packet_reproducer.c with evaluations/run_ffmpeg_rtp_h263_small_packet_reproducer.py for RFC2190. The sibling RFC4629 and H.261 harnesses and matching runners reproduce the size=-1 and size=-3 variants.",
       "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
       "vulnerability_trace": {
-        "summary": "a packet size valid under RTP's common-header check is smaller than H.263's codec-specific payload headers, so subtracting either header creates a negative fragment length that reaches memcpy",
+        "summary": "a packet size valid under RTP's common-header check is smaller than the H.263 and H.261 codec-specific payload headers, so subtracting those headers creates negative fragment lengths that reach memcpy",
         "steps": [
           {"file": "libavformat/rtpenc.c", "line": 155, "function": "rtp_write_header", "code_snippet": "if (s1->packet_size <= 12) return AVERROR(EIO);", "note": "A 13-byte packet sink is explicitly accepted by the common RTP initialization check."},
           {"file": "libavformat/rtpenc.c", "line": 163, "function": "rtp_write_header", "code_snippet": "s->max_payload_size = s1->packet_size - 12;", "note": "The accepted sink leaves max_payload_size equal to one."},
           {"file": "libavformat/rtpenc_h263_rfc2190.c", "line": 129, "function": "ff_rtp_send_h263_rfc2190", "code_snippet": "len = FFMIN(s->max_payload_size - 8, size);", "note": "Subtracting the eight-byte mode-B header produces a fragment length of -7."},
           {"file": "libavformat/rtpenc_h263.c", "line": 28, "function": "ff_h263_find_resync_marker_reverse", "code_snippet": "const uint8_t *p = end - 1; ... return end;", "note": "With a negative end pointer, the resynchronization loop does not recover a nonnegative fragment length."},
-          {"file": "libavformat/rtpenc_h263_rfc2190.c", "line": 96, "function": "send_mode_b", "code_snippet": "memcpy(s->buf + 8, buf, len);", "note": "ASan reports negative-size-param with size -7 through the public muxer on both snapshots."}
+          {"file": "libavformat/rtpenc_h263_rfc2190.c", "line": 96, "function": "send_mode_b", "code_snippet": "memcpy(s->buf + 8, buf, len);", "note": "ASan reports negative-size-param with size -7 through the public muxer on both snapshots."},
+          {"file": "libavformat/rtpenc_h261.c", "line": 83, "function": "ff_rtp_send_h261", "code_snippet": "cur_frame_size = FFMIN(rtp_ctx->max_payload_size - RTP_H261_HEADER_SIZE, frame_size);", "note": "The same accepted one-byte capacity minus H.261's four-byte payload header produces -3, and the reverse marker search preserves it."},
+          {"file": "libavformat/rtpenc_h261.c", "line": 96, "function": "ff_rtp_send_h261", "code_snippet": "memcpy(&rtp_ctx->buf[RTP_H261_HEADER_SIZE], frame_buf, cur_frame_size);", "note": "The pinned public muxer proof reaches this copy and ASan reports negative-size-param with size -3."}
         ]
       }
     },
@@ -1100,7 +1102,8 @@
       {"path": "libavformat/rtpenc_h263_rfc2190.c", "start": 40, "end": 195},
       {"path": "libavformat/rtpenc_h263.c", "start": 20, "end": 42},
       {"path": "libavformat/rtpenc.c", "start": 135, "end": 170},
-      {"path": "libavformat/rtpenc.c", "start": 615, "end": 640}
+      {"path": "libavformat/rtpenc.c", "start": 615, "end": 640},
+      {"path": "libavformat/rtpenc_h261.c", "start": 24, "end": 102}
     ]
   },
   {
@@ -7146,6 +7149,139 @@
         "path": "libswscale/swscale.c",
         "start": 1019,
         "end": 1050
+      }
+    ]
+  },
+  {
+    "case_id": "flip-vulkan-missing-minus-one-image-oob",
+    "finding": {
+      "id": "ffmpeg-flip-vulkan-missing-minus-one-image-oob",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavfilter/vf_flip_vulkan.c",
+      "line_number": 112,
+      "severity": "high",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "The Vulkan horizontal, vertical, and combined flip shaders calculate mirrored zero-based coordinates as dimension minus position instead of dimension minus one minus position. The dispatch guard admits every valid output coordinate, so output x=0 makes horizontal flip load input x=width, output y=0 makes vertical flip load y=height, and combined flip crosses one or both bounds along its first row and column. The exact source-and-geometry proof exhausts a 4x3 frame and finds three, four, and six invalid image loads respectively. Later compile-time shader refactor d0ee5d0556 moves the same coordinate to the destination store without adding the missing subtraction, and current origin/master still contains the out-of-range transform. No Vulkan runtime was available locally.",
+      "code_snippet": "imageLoad(input_image[i], ivec2(size.x - pos.x, pos.y)); ... imageLoad(input_image[i], ivec2(pos.x, size.y - pos.y));",
+      "poc": "Run evaluations/run_ffmpeg_flip_vulkan_coordinate_proof.py against the pinned checkout. Its ignored report validates the exact shader expressions and exhaustively records every out-of-range coordinate for a 4x3 public frame with expected_observed=true.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "each Vulkan flip mode mirrors zero-based image coordinates around dimension rather than dimension minus one, crossing the image boundary on the first output row or column",
+        "steps": [
+          {
+            "file": "libavfilter/vf_flip_vulkan.c",
+            "line": 107,
+            "function": "init_filter generated shader",
+            "code_snippet": "size = imageSize(output_image[i]); if (IS_WITHIN(pos, size)) {",
+            "note": "The guard dispatches all ordinary zero-based output positions from (0,0) through (width-1,height-1)."
+          },
+          {
+            "file": "libavfilter/vf_flip_vulkan.c",
+            "line": 112,
+            "function": "init_filter generated shader",
+            "code_snippet": "ivec2(size.x - pos.x, pos.y)",
+            "note": "At every first-column invocation x=0, horizontal flip derives x=width, one texel beyond the input image."
+          },
+          {
+            "file": "libavfilter/vf_flip_vulkan.c",
+            "line": 115,
+            "function": "init_filter generated shader",
+            "code_snippet": "ivec2(pos.x, size.y - pos.y)",
+            "note": "At every first-row invocation y=0, vertical flip derives y=height, one texel beyond the input image."
+          },
+          {
+            "file": "libavfilter/vf_flip_vulkan.c",
+            "line": 118,
+            "function": "init_filter generated shader",
+            "code_snippet": "ivec2(size.xy - pos.xy)",
+            "note": "Combined flip crosses the x or y boundary for the union of the first column and first row."
+          },
+          {
+            "file": "libavfilter/vf_flip_vulkan.c",
+            "line": 166,
+            "function": "filter_frame",
+            "code_snippet": "ff_vk_filter_process_simple(..., out, in, ...)",
+            "note": "The public Vulkan filter runs the generated shader on matching negotiated input and output frame geometry; mismatched images are not required to reach the invalid coordinates."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/vf_flip_vulkan.c",
+        "start": 45,
+        "end": 175
+      }
+    ]
+  },
+  {
+    "case_id": "metadata-print-vsnprintf-stack-overread",
+    "finding": {
+      "id": "ffmpeg-metadata-print-vsnprintf-stack-overread",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavfilter/f_metadata.c",
+      "line_number": 205,
+      "severity": "high",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The metadata filter's file-output callback formats each frame metadata key/value into a fixed 128-byte stack buffer, but passes vsnprintf's full untruncated return value to avio_write. A public buffer-to-metadata-to-buffersink graph with a 511-byte frame metadata value therefore formats a logical 523-byte line, stores only its first 127 bytes plus NUL, and asks AVIO to copy 523 bytes from the stack object. ASan reports a 523-byte stack-buffer-overflow read in avio_write called directly by print_file, potentially disclosing adjacent stack contents into the configured metadata output.",
+      "code_snippet": "char buf[128]; int ret = vsnprintf(buf, sizeof(buf), msg, argument_list); avio_write(s->avio_context, buf, ret);",
+      "poc": "Configure the pinned FFmpeg tree with the metadata filter and file protocol, then run evaluations/run_ffmpeg_metadata_print_stack_overread_reproducer.py. Its public-filter-graph harness records the 511-byte value, 523-byte formatted length, 128-byte stack buffer, and matching ASan over-read with expected_observed=true.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a long public frame metadata value makes metadata=mode=print use vsnprintf's untruncated logical length to export hundreds of bytes beyond its fixed stack buffer",
+        "steps": [
+          {
+            "file": "libavfilter/f_metadata.c",
+            "line": 258,
+            "function": "init",
+            "code_snippet": "if (s->mode == METADATA_PRINT && s->file_str) { s->print = print_file; }",
+            "note": "Selecting the public print mode with a file output installs the vulnerable callback."
+          },
+          {
+            "file": "libavfilter/f_metadata.c",
+            "line": 339,
+            "function": "filter_frame",
+            "code_snippet": "s->print(ctx, \"%s=%s\\n\", e->key, e->value);",
+            "note": "The public AVFrame's unrestricted metadata key and value become the callback's formatted line; the proof's sourcehunt key and 511-byte value require 523 bytes."
+          },
+          {
+            "file": "libavfilter/f_metadata.c",
+            "line": 204,
+            "function": "print_file",
+            "code_snippet": "int ret = vsnprintf(buf, sizeof(buf), msg, argument_list);",
+            "note": "Only 127 data bytes and a terminator fit in buf, but C99 vsnprintf returns the complete 523-byte length that would have been written."
+          },
+          {
+            "file": "libavfilter/f_metadata.c",
+            "line": 205,
+            "function": "print_file",
+            "code_snippet": "avio_write(s->avio_context, buf, ret);",
+            "note": "The untruncated return value becomes AVIO's source length with no clamp to sizeof(buf) - 1."
+          },
+          {
+            "file": "libavformat/aviobuf.c",
+            "line": 217,
+            "function": "avio_write",
+            "code_snippet": "memcpy(s->buf_ptr, buf, len);",
+            "note": "ASan records a READ of size 523 crossing the exact 128-byte print_file stack object and aborts in this production copy."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/f_metadata.c",
+        "start": 190,
+        "end": 350
+      },
+      {
+        "path": "libavformat/aviobuf.c",
+        "start": 195,
+        "end": 225
       }
     ]
   }

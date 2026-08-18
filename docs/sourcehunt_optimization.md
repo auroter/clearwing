@@ -4498,3 +4498,82 @@ Direct deterministic regeneration reproduces ranks 1765–1788 exactly and seals
 ranks 1789–1812 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1789_1812.json` with SHA-256
 `e839ccaf9e4e6f3b4470eb0d5fb8ef5112dc2d5c041031e90a79e548d45f6bf3`.
+
+### Blind wave 1789–1812 and two offline-recovered roots
+
+The wave completed source-bearing work on all 24 exact paths in one pinned
+session. It settled 944 model calls using 9,258,194 input tokens and 165,266
+output tokens, 9,423,460 total, and made 211 raw candidate/finding calls. It
+submitted no formal findings.
+
+Offline adjudication dynamically confirms a stack over-read in the metadata
+filter's file-output callback. `print_file` formats into a 128-byte stack buffer
+but passes `vsnprintf`'s full untruncated return length to `avio_write`. A public
+buffer-to-metadata-to-buffersink graph with a 511-byte frame metadata value
+therefore asks AVIO to copy 523 bytes from that stack object. ASan reports a
+523-byte stack-buffer-overflow read in `avio_write` called directly by
+`print_file`. The same code remains in current `origin/master`.
+
+The Vulkan flip shader contains an independent source-confirmed coordinate
+root. Horizontal, vertical, and combined flips mirror zero-based coordinates as
+`size - pos` rather than `size - 1 - pos`. For every frame, the first output
+column therefore reads input `x=width`, the first row reads `y=height`, or both.
+An exhaustive 4x3 geometry proof records three, four, and six invalid image
+loads for the three modes. Later compile-time shader refactor `d0ee5d0556` moves
+the same coordinate to the destination store without adding the missing
+subtraction, and current `origin/master` remains affected. No Vulkan runtime was
+available locally, so this root is not counted as dynamically reproduced.
+
+The wave also dynamically confirms H.261 as a new codec variant of the existing
+undersized-RTP-payload root. The common muxer accepts a 13-byte packet sink and
+derives one byte of payload capacity; H.261 then subtracts its four-byte payload
+header, preserves `cur_frame_size=-3` through its reverse marker search, and
+passes it to `memcpy`. The public muxer harness produces ASan
+`negative-size-param (size=-3)`. This extends the existing H.263 RFC2190/RFC4629
+survivor rather than incrementing the root count.
+
+The durable artifacts are
+`evaluations/run_ffmpeg_metadata_print_stack_overread_reproducer.py`,
+`evaluations/run_ffmpeg_flip_vulkan_coordinate_proof.py`, and
+`evaluations/run_ffmpeg_rtp_h261_small_packet_reproducer.py`, with matching C
+harnesses where execution is available. Their ignored reports pin commit
+`795bccdaf57772b1803914dee2f32d52776518e2` and report
+`expected_observed=true`.
+
+Both the metadata and H.261 hunters reached the correct entry-to-sink trace and
+attempted formal submission, but the treatment's candidate checkpoint rejected
+the calls as not previously validated. The Vulkan hunter formed a weaker
+mismatched-image hypothesis and missed the unconditional missing-minus-one
+boundary. The frozen treatment remains unchanged; offline review retains the
+two novel roots and one existing-root variant.
+
+The remaining candidates close under concrete contracts. Subtitle-queue callers
+provide fixed-buffer ints or complete bounded `AVBPrint` lengths, and oversized
+conversions into packet APIs reject before copying. ADTS retains its seven-byte
+packet header and caps frame size at 8,191; MPL2 packets carry mandatory zero
+padding; H.263 rejects an oversized picture-header skip before copying; and
+Filmstrip turns huge geometry into bounded allocation or a short read rather
+than an out-of-bounds access. KVAG's suspect values affect metadata or propagate
+checked errors.
+
+Codec and filter invariants close the other leads. Musepack parsers cap subbands
+below 32, DV audio's static shuffle fits its validated block and sample count,
+AAC intensity stereo's static scale-band widths sum within each 128-coefficient
+window, and IDCT permutations consume codec-owned static scan tables. CABAC
+initialization advances two or three bytes before `skip_bytes` rewinds at most
+one or two. VirtualBass allocates all three output planes, Anoise allocates its
+declared sample count, CoverRect's mode is range-constrained, transform callers
+supply valid frame strides covering width, and IAMF's allocation guard matches
+its subblock loop. LoongArch HEVC SAO dispatch uses its padded scratch and frame
+tail contracts; DFPWM and QP processing remain within framework-owned buffers.
+
+The two roots raise the totals to 129 confirmed root causes and 111 dynamically
+reproduced issues. Historical coverage is 1,812/4,995 (36.28%), with 3,183
+historically ranked files remaining.
+
+Direct deterministic regeneration verifies every tracked path from ranks
+181–1,812 as a strict ranked subsequence and recovers the complete 180-path
+initial prefix as the only gaps before that frontier. This avoids transferring
+the ignored historical result archive and seals ranks 1813–1836 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1813_1836.json` with SHA-256
+`aabd84ba692b81f85f461ae11291b3901d8bd55248a644079e7d76f841bcc72f`.
