@@ -9210,5 +9210,225 @@
         "end": 325
       }
     ]
+  },
+  {
+    "case_id": "hevc-hvcc-nal-count-overflow",
+    "finding": {
+      "id": "ffmpeg-hevc-hvcc-nal-count-overflow",
+      "finding_type": "out_of_bounds_write",
+      "cwe": "CWE-787",
+      "file": "libavformat/hevc.c",
+      "line_number": 912,
+      "severity": "high",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "An hvcC record may repeat one NAL type across multiple arrays, and FFmpeg merges all of those units into one HVCCNALUnitArray whose numNalus field is uint16_t. At the 65,536th unit, the unchecked increment wraps the count from 65,535 to zero; hvcc_add_nal_unit then addresses array->nal[-1] and writes before the heap allocation. A production-parser proof uses two same-type arrays and makes ASan report a one-byte write 24 bytes before the 1,572,864-byte allocation. Exact repair c7132ef8 rejects the unit before the count can wrap, explicitly identifies integer overflow and out-of-array access, and cleanly rejects the same hvcC.",
+      "code_snippet": "uint16_t numNalus = array->numNalus; ... array->numNalus++; ... nal = &array->nal[array->numNalus-1]; nal->nuh_layer_id = nuh_layer_id;",
+      "poc": "Run evaluations/run_ffmpeg_hevc_hvcc_nal_count_overflow_reproducer.py against the pinned configured tree. It supplies two hvcC arrays of type 39 declaring 65,535 plus one NAL unit; ASan reports the write at hevc.c:912 and exact repair c7132ef8 returns AVERROR_INVALIDDATA without sanitizer output.",
+      "discovered_by": "sourcehunt:offline-repair-diff-plus-dynamic-proof",
+      "vulnerability_trace": {
+        "summary": "repeated hvcC arrays aggregate 65,536 same-type NAL units into a uint16 count, which wraps and makes the post-add metadata write address nal[-1]",
+        "steps": [
+          {
+            "file": "libavformat/hevc.c",
+            "line": 1339,
+            "function": "write_configuration_record",
+            "code_snippet": "num_arrays = get_bits(&gbc, 8); for (int i = 0; i < num_arrays; i++) { ... num_nalus = get_bits(&gbc, 16);",
+            "note": "One hvcC can declare multiple arrays, including repeated arrays with the same NAL type; each array carries an independent 16-bit count."
+          },
+          {
+            "file": "libavformat/hevc.c",
+            "line": 1352,
+            "function": "write_configuration_record",
+            "code_snippet": "ret = hvcc_parse_nal_unit(..., type, &hvcc, flags);",
+            "note": "Every declared unit is routed by NAL type into the same per-type HVCCNALUnitArray, so counts across repeated arrays accumulate."
+          },
+          {
+            "file": "libavformat/hevc.c",
+            "line": 845,
+            "function": "hvcc_array_add_nal_unit",
+            "code_snippet": "uint16_t numNalus = array->numNalus; ... array->numNalus++;",
+            "note": "The 65,536th append allocates room successfully at index 65,535 and then wraps the stored count to zero."
+          },
+          {
+            "file": "libavformat/hevc.c",
+            "line": 912,
+            "function": "hvcc_add_nal_unit",
+            "code_snippet": "nal = &array->nal[array->numNalus-1]; nal->nuh_layer_id = nuh_layer_id;",
+            "note": "The wrapped zero count produces nal[-1]. ASan reports a one-byte write 24 bytes before the exact 1,572,864-byte NAL array allocation."
+          },
+          {
+            "file": "libavformat/hevc.c",
+            "line": 847,
+            "function": "later repair c7132ef8",
+            "code_snippet": "if (numNalus >= UINT16_MAX) return AVERROR_INVALIDDATA;",
+            "note": "The exact upstream repair rejects before allocation and increment; the identical replay exits cleanly."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/hevc.c",
+        "start": 50,
+        "end": 90
+      },
+      {
+        "path": "libavformat/hevc.c",
+        "start": 835,
+        "end": 925
+      },
+      {
+        "path": "libavformat/hevc.c",
+        "start": 1270,
+        "end": 1365
+      },
+      {
+        "path": "libavformat/hevc.h",
+        "start": 45,
+        "end": 115
+      }
+    ]
+  },
+  {
+    "case_id": "binka-short-read-heap-disclosure",
+    "finding": {
+      "id": "ffmpeg-binka-short-read-heap-disclosure",
+      "finding_type": "information_disclosure",
+      "cwe": "CWE-457",
+      "file": "libavformat/binka.c",
+      "line_number": 83,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "The Bink Audio demuxer allocates the input-declared packet size, ignores avio_read's short return at EOF, and publishes the full packet. av_new_packet leaves the payload allocation uninitialized and zeros only the separate padding region. An exact-source proof initializes a fresh 68-byte packet with a visible prior-heap marker, supplies only one of 64 declared payload bytes, and observes all 63 unwritten bytes in the returned packet. A remux or packet consumer can therefore disclose stale heap contents; a guarded control rejects the short read before publication. Current master remains unchecked.",
+      "code_snippet": "pkt_size = avio_rl16(pb) + 4; ... av_new_packet(pkt, pkt_size); avio_read(pb, pkt->data + 4, pkt_size - 4); ... return 0;",
+      "poc": "Run evaluations/run_ffmpeg_binka_short_read_disclosure_reproducer.py against the pinned configured tree. Its exact demux path declares 64 payload bytes but provides one, then returns a 68-byte packet retaining 63 proof marker bytes; the guarded replay publishes no packet.",
+      "discovered_by": "sourcehunt:terminal-ledger-plus-offline-proof",
+      "vulnerability_trace": {
+        "summary": "a truncated Bink Audio packet leaves the unread portion of an input-sized heap allocation uninitialized but returns the complete declared packet downstream",
+        "steps": [
+          {
+            "file": "libavformat/binka.c",
+            "line": 76,
+            "function": "binka_read_packet",
+            "code_snippet": "pkt_size = avio_rl16(pb) + 4;",
+            "note": "The input controls a payload size of up to 65,535 bytes plus the four-byte packet header."
+          },
+          {
+            "file": "libavcodec/packet.c",
+            "line": 89,
+            "function": "packet_alloc",
+            "code_snippet": "av_buffer_realloc(buf, size + AV_INPUT_BUFFER_PADDING_SIZE); ... memset((*buf)->data + size, 0, AV_INPUT_BUFFER_PADDING_SIZE);",
+            "note": "Packet allocation does not initialize the declared data region; only bytes after pkt->size are zeroed as codec padding."
+          },
+          {
+            "file": "libavformat/aviobuf.c",
+            "line": 662,
+            "function": "avio_read",
+            "code_snippet": "return size1 - size;",
+            "note": "At EOF after a partial transfer, avio_read returns the short byte count and leaves the rest of the destination untouched."
+          },
+          {
+            "file": "libavformat/binka.c",
+            "line": 83,
+            "function": "binka_read_packet",
+            "code_snippet": "avio_read(pb, pkt->data + 4, pkt_size - 4);",
+            "note": "The demuxer discards that return value, does not shrink or clear the packet, and returns success with the original pkt->size."
+          },
+          {
+            "file": "libavformat/demux.c",
+            "line": 629,
+            "function": "ff_read_packet",
+            "code_snippet": "err = s->iformat->read_packet(s, pkt);",
+            "note": "A zero callback result makes the complete packet available to decoders, applications, or stream-copy muxing."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/binka.c",
+        "start": 26,
+        "end": 101
+      },
+      {
+        "path": "libavcodec/packet.c",
+        "start": 83,
+        "end": 111
+      },
+      {
+        "path": "libavformat/aviobuf.c",
+        "start": 615,
+        "end": 673
+      },
+      {
+        "path": "libavformat/demux.c",
+        "start": 610,
+        "end": 705
+      }
+    ]
+  },
+  {
+    "case_id": "chromaprint-raw-fingerprint-size-overflow",
+    "finding": {
+      "id": "ffmpeg-chromaprint-raw-fingerprint-size-overflow",
+      "finding_type": "integer_overflow",
+      "cwe": "CWE-190",
+      "file": "libavformat/chromaprint.c",
+      "line_number": 137,
+      "severity": "low",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "Chromaprint accepts an unbounded sequence of audio feed calls and returns its raw fingerprint element count as int. FFmpeg's raw-output trailer multiplies that count by four in signed int before passing the byte count to avio_write. At 536,870,912 elements the mathematical 2,147,483,648-byte size exceeds INT_MAX; UBSan aborts at the exact production multiplication. A guarded control rejects the count cleanly. Reaching this boundary requires an explicitly enabled Chromaprint muxer and retaining roughly 2 GiB of fingerprint data, so impact is limited to hardened-build availability and raw-output integrity; current master remains unchecked.",
+      "code_snippet": "int size; ... chromaprint_get_raw_fingerprint(cpr->ctx, (uint32_t **)&fp, &size); ... avio_write(pb, fp, size * 4);",
+      "poc": "Run evaluations/run_ffmpeg_chromaprint_raw_size_overflow_reproducer.py against the pinned configured tree. A proof-only implementation of the documented external API returns 536,870,912 raw elements after the production trailer path; UBSan reports 536870912 * 4 at chromaprint.c:137 and the guarded replay rejects it.",
+      "discovered_by": "sourcehunt:terminal-ledger-plus-offline-proof",
+      "vulnerability_trace": {
+        "summary": "a sufficiently long Chromaprint session returns a raw element count whose four-byte conversion overflows signed int in the FFmpeg trailer",
+        "steps": [
+          {
+            "file": "libavformat/chromaprint.c",
+            "line": 114,
+            "function": "write_packet",
+            "code_snippet": "return chromaprint_feed(cpr->ctx, (const int16_t *)pkt->data, pkt->size / 2) ? 0 : AVERROR(EINVAL);",
+            "note": "Packets can feed one retained Chromaprint context for the full, otherwise unbounded muxing session."
+          },
+          {
+            "file": "libavformat/chromaprint.c",
+            "line": 123,
+            "function": "write_trailer",
+            "code_snippet": "int size, enc_size, ret = AVERROR_EXTERNAL;",
+            "note": "The external API reports the number of uint32_t fingerprint elements through signed int."
+          },
+          {
+            "file": "libavformat/chromaprint.c",
+            "line": 130,
+            "function": "write_trailer",
+            "code_snippet": "chromaprint_get_raw_fingerprint(cpr->ctx, (uint32_t **)&fp, &size)",
+            "note": "The proof-only external implementation supplies the first API-representable count whose four-byte size exceeds INT_MAX."
+          },
+          {
+            "file": "libavformat/chromaprint.c",
+            "line": 137,
+            "function": "write_trailer",
+            "code_snippet": "avio_write(pb, fp, size * 4);",
+            "note": "UBSan reports signed overflow of 536,870,912 times four before avio_write receives the invalid narrowed byte count."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/chromaprint.c",
+        "start": 64,
+        "end": 115
+      },
+      {
+        "path": "libavformat/chromaprint.c",
+        "start": 117,
+        "end": 157
+      }
+    ]
   }
 ]

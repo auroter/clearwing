@@ -5695,3 +5695,83 @@ Direct deterministic regeneration reproduces ranks 2197–2220 exactly and
 seals ranks 2221–2244 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_2221_2244.json` with SHA-256
 `263fd35da67833aca181b28cbeb1332804da431ab2df5fbb26414069010f1e02`.
+
+### Blind wave 2221–2244 and three reproduced roots
+
+The wave completed source-bearing work on all 24 exact paths in one pinned
+session. It settled 929 model calls using 8,981,190 input tokens and 156,001
+output tokens, 9,137,191 total, and made 187 raw candidate/finding calls. It
+submitted no formal findings.
+
+Offline repair review and exact-source proof retain an hvcC count overflow.
+The configuration-record parser permits repeated arrays with one NAL type and
+merges their units into a single array whose count is `uint16_t`. Two arrays
+declaring 65,535 plus one type-39 unit make the unchecked increment wrap to
+zero; the subsequent metadata assignment addresses `array->nal[-1]`. ASan
+reports the one-byte write 24 bytes before the exact 1,572,864-byte allocation.
+Exact repair `c7132ef8f63c383d11a00a9e3034748d8dd15fb3` explicitly identifies integer
+overflow and out-of-array access, names crafted hvcC stream-copy reachability,
+and cleanly rejects the same input.
+
+Two terminal-ledger candidates also survive. The Bink Audio demuxer allocates
+the declared packet size but ignores `avio_read()` returning short at EOF.
+Because `av_new_packet()` initializes only the separate padding, a packet that
+declares 64 payload bytes and supplies one returns success with 63 unwritten
+data bytes. The exact-source proof fills the new packet with a visible
+prior-heap marker and observes all 63 bytes downstream; a guarded control
+refuses publication. Current master remains unchecked.
+
+Chromaprint's raw trailer obtains its fingerprint element count as signed
+`int` after an otherwise unbounded sequence of feed calls, then multiplies it
+by four in signed `int`. A proof-only implementation of the documented
+external API returns 536,870,912 elements, whose mathematical byte size is
+2,147,483,648. UBSan aborts at the exact multiplication in `chromaprint.c:137`,
+while a guarded control rejects the count. Reaching this boundary requires an
+explicitly enabled Chromaprint muxer and retaining roughly 2 GiB of fingerprint
+data, so this is a low-severity hardened-build availability and raw-output
+integrity root. Current master also remains unchecked.
+
+The durable artifacts are the three matching harnesses and runners under
+`evaluations/`: `ffmpeg_hevc_hvcc_nal_count_overflow`,
+`ffmpeg_binka_short_read_disclosure`, and
+`ffmpeg_chromaprint_raw_size_overflow`. The Chromaprint proof carries only the
+minimal documented external API under `evaluations/ffmpeg_chromaprint_stub/`.
+All three ignored reports pin commit
+`795bccdaf57772b1803914dee2f32d52776518e2` and report
+`expected_observed=true`; the hvcC report records the clean exact repair, and
+the two current-master cases record clean guarded controls.
+
+Terminal-ledger scoring recovers the Bink Audio and Chromaprint mechanisms.
+The `libavformat/hevc.h` trajectory instead pursued unrelated NAL start-code
+and return-value arithmetic and missed the repeated-array count. Recall is
+therefore 2/3 from terminal ledgers and 0/3 from formal findings.
+
+The remaining candidates close under exact bounds and ownership contracts.
+QCELP bitmap widths match every vector table and all bit positions remain
+inside their target bytes. CAVS, VP9, VC-1, texture, and MIPS float kernels
+receive codec-owned blocks, valid transform sizes, and decoder edge padding.
+Executor teardown signals and joins every worker before freeing its state;
+tasks are caller-owned asynchronous API objects. H.263's negative boundary is
+the parser framework's cross-buffer convention, and lossless byte differencing
+receives validated positive image widths with matching buffers.
+
+TwinVQ's bark, codebook, and scratch sizes are fixed by internal mode tables.
+The Vulkan AV1 16-byte tail contains only the fixed show-existing-frame OBU,
+and DialogueEnhance allocates and consumes the same negotiated overlap. BONK
+validates its channel and frame domains in the decoder. SUP length checks,
+UUID pointer-range contracts, and network `sockaddr_storage` representation
+dominate their alleged reads. MDEC frame allocation covers complete coded
+macroblocks. GENH's accepted interleave-one loop writes one byte past logical
+`pkt->size`, but that byte remains inside the mandatory zero-padding allocation
+and establishes packet-content corruption rather than a heap escape.
+`ff_nal_find_startcode()`'s staged end adjustments return the original end on
+failure, so its caller never receives the alleged three-past pointer.
+
+The three new roots raise the totals to 158 confirmed root causes and 136
+dynamically reproduced issues. Historical coverage is 2,244/4,995 (44.92%),
+with 2,751 historically ranked files remaining.
+
+Direct deterministic regeneration reproduces ranks 2221–2244 exactly and
+seals ranks 2245–2268 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_2245_2268.json` with SHA-256
+`117f1ce4120a5b11eb04d3d0fb2889b21824cf8132b1625ec8a91af655ec9d13`.
