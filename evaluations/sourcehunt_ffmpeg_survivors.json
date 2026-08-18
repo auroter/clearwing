@@ -9126,5 +9126,89 @@
         "end": 306
       }
     ]
+  },
+  {
+    "case_id": "subtitle-header-use-after-free",
+    "finding": {
+      "id": "ffmpeg-subtitle-header-use-after-free",
+      "finding_type": "use_after_free",
+      "cwe": "CWE-416",
+      "file": "fftools/ffmpeg_dec.c",
+      "line_number": 1624,
+      "severity": "high",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "ffmpeg's decoder object borrows AVCodecContext.subtitle_header, but the decoder thread frees that owning context while subtitle encoder initialization may consume the borrowed header later. A direct ownership-sequence proof uses the configured libavcodec allocation and avcodec_free_context path; ASan reports a 46-byte encoder-side read from the freed allocation. Exact repair fa391e90fb deep-copies the header into Decoder-owned storage, frees it in dec_free, explicitly identifies the use-after-free, and makes the same replay complete cleanly.",
+      "code_snippet": "dp->dec.subtitle_header = dp->dec_ctx->subtitle_header; ... avcodec_free_context(&dp->dec_ctx); ... memcpy(enc_ctx->subtitle_header, dec->subtitle_header, dec->subtitle_header_size);",
+      "poc": "Run evaluations/run_ffmpeg_subtitle_header_uaf_reproducer.py against the pinned configured tree. It publishes a 46-byte subtitle header, releases its actual AVCodecContext owner, and performs the later encoder-side copy; ASan reports the freed read and the exact repaired ownership sequence returns checksum 3804 without a sanitizer error.",
+      "discovered_by": "sourcehunt:offline-repair-diff-plus-dynamic-proof",
+      "vulnerability_trace": {
+        "summary": "the decoder publishes a borrowed subtitle-header pointer whose AVCodecContext owner can be released before later subtitle encoder initialization copies it",
+        "steps": [
+          {
+            "file": "fftools/ffmpeg.h",
+            "line": 472,
+            "function": "Decoder",
+            "code_snippet": "const uint8_t *subtitle_header;",
+            "note": "The vulnerable Decoder representation stores only a non-owning pointer and size, with no independent allocation."
+          },
+          {
+            "file": "fftools/ffmpeg_dec.c",
+            "line": 1624,
+            "function": "dec_open",
+            "code_snippet": "dp->dec.subtitle_header = dp->dec_ctx->subtitle_header;",
+            "note": "Decoder initialization publishes the AVCodecContext-owned allocation by pointer instead of copying it."
+          },
+          {
+            "file": "fftools/ffmpeg_dec.c",
+            "line": 1024,
+            "function": "decoder_thread",
+            "code_snippet": "avcodec_free_context(&dp->dec_ctx);",
+            "note": "Decoder-thread teardown frees the context and its subtitle_header allocation while the borrowed Decoder pointer remains set."
+          },
+          {
+            "file": "fftools/ffmpeg_enc.c",
+            "line": 318,
+            "function": "enc_open",
+            "code_snippet": "memcpy(enc_ctx->subtitle_header, dec->subtitle_header, dec->subtitle_header_size);",
+            "note": "Later subtitle encoder initialization reads the stale pointer. ASan reports a 46-byte heap-use-after-free read at this ownership sink."
+          },
+          {
+            "file": "fftools/ffmpeg_dec.c",
+            "line": 1626,
+            "function": "later repair fa391e90fb",
+            "code_snippet": "dp->dec.subtitle_header = av_mallocz(...); memcpy(dp->dec.subtitle_header, dp->dec_ctx->subtitle_header, ...);",
+            "note": "The exact repair deep-copies the header and releases that Decoder-owned copy in dec_free; repaired replay remains valid after context teardown."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "fftools/ffmpeg.h",
+        "start": 467,
+        "end": 479
+      },
+      {
+        "path": "fftools/ffmpeg_dec.c",
+        "start": 120,
+        "end": 150
+      },
+      {
+        "path": "fftools/ffmpeg_dec.c",
+        "start": 1000,
+        "end": 1030
+      },
+      {
+        "path": "fftools/ffmpeg_dec.c",
+        "start": 1600,
+        "end": 1635
+      },
+      {
+        "path": "fftools/ffmpeg_enc.c",
+        "start": 300,
+        "end": 325
+      }
+    ]
   }
 ]

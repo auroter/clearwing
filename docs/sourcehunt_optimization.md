@@ -5640,3 +5640,58 @@ Direct deterministic regeneration reproduces ranks 2173–2196 exactly and
 seals ranks 2197–2220 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_2197_2220.json` with SHA-256
 `2bec967c9ec7f0466acefe1b77debf55660053339155267c5e70a2e0c5c28d81`.
+
+### Blind wave 2197–2220 and subtitle-header use-after-free
+
+The wave completed source-bearing work on all 24 exact paths in one pinned
+session. It settled 866 model calls using 7,929,906 input tokens and 153,485
+output tokens, 8,083,391 total, and made 158 raw candidate/finding calls. It
+submitted no formal findings.
+
+Offline repair-diff review and sanitizer proof retain one root. `dec_open()`
+publishes `AVCodecContext.subtitle_header` into the longer-lived `Decoder` as a
+borrowed pointer. The decoder thread later releases the owning codec context,
+while subtitle encoder initialization may subsequently allocate its own header
+and copy from the dangling pointer. The configured exact-ownership proof makes
+ASan report a 46-byte heap-use-after-free read in the encoder-side copy, with
+the free attributed to the real `avcodec_free_context()` path. Exact repair
+`fa391e90fb00510e926e305d6f8067cadf0f4153`, whose title explicitly identifies
+the use-after-free, deep-copies the header into `Decoder`-owned storage and
+frees it in `dec_free()`. The repaired replay is clean and returns checksum
+3,804.
+
+The durable artifacts are
+`evaluations/ffmpeg_subtitle_header_uaf_reproducer.c` and
+`evaluations/run_ffmpeg_subtitle_header_uaf_reproducer.py`. The ignored report
+pins commit `795bccdaf57772b1803914dee2f32d52776518e2`, records the complete
+source and runtime chain, and reports `expected_observed=true`. The online
+hunter's `fftools/ffmpeg.h` trajectory raised an unrelated filter/link-label
+ownership concern but did not identify the subtitle-header lifetime. Recall is
+therefore 0/1 from terminal ledgers and 0/1 from formal findings.
+
+The remaining candidates close under exact allocation, input, and ownership
+contracts. DShow takes an explicit extra reference on the capture pin, so its
+direct release and later filter cleanup balance two references. Vorbis, STL,
+and VPlayer `%n` advances stay inside their terminated input strings. Ogg's
+`nstreams + 1` wrap requires impossible prior allocations, while SVAG and WADY
+duration arithmetic affects metadata rather than packet allocation. Speex
+allocates enough samples for stereo expansion, G.729 phase decisions are
+exactly zero through two, and the WASM HEVC scratch, AC-3 probe buffer, H.2645
+packet extraction, and CBS fragment assembly all cover their maximum accesses.
+
+Swscale's vertical `sliceY` is internal destination progress bounded by the
+configured height. LoongArch VC-1 loads inherit decoder padding and edge
+emulation; raw encoder sizing is dominated by `av_image_get_buffer_size()`,
+ProRes alignment starts from 16-bit dimensions, and LCEVC bounds each block
+before skipping it. The supplied H.264 slice counter, poisoned spare-column,
+and `top_borders[-1]` trace is direct corroboration of the already retained
+`h264-slice-sentinel-collision` root and is not counted a second time.
+
+The new root raises the totals to 155 confirmed root causes and 133 dynamically
+reproduced issues. Historical coverage is 2,220/4,995 (44.44%), with 2,775
+historically ranked files remaining.
+
+Direct deterministic regeneration reproduces ranks 2197–2220 exactly and
+seals ranks 2221–2244 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_2221_2244.json` with SHA-256
+`263fd35da67833aca181b28cbeb1332804da431ab2df5fbb26414069010f1e02`.
