@@ -4844,3 +4844,40 @@ Direct deterministic regeneration reproduces ranks 1909–1932 exactly and
 seals ranks 1933–1956 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1933_1956.json` with SHA-256
 `b1772b1aac050a1a73a69e3b9569fa284e095b2225860a58e1addccfb73b1bfe`.
+
+### Blind wave 1933–1956
+
+The wave completed source-bearing work on all 24 exact paths in one pinned
+session. It settled 929 model calls using 8,986,527 input tokens and 168,867
+output tokens, 9,155,394 total, and made 184 raw candidate/finding calls. It
+submitted no formal findings.
+
+Offline adjudication closes the strongest parser and demuxer leads. Ogg/Dirac's
+short-packet size expressions can wrap as unsigned values, but conversion at
+`init_get_bits8` produces a negative `int` size that is rejected while the
+pointer remains inside Ogg's padded packet allocation. SeparateFields clones
+the queued `AVFrame`: its data-pointer and linesize fields are independent even
+though the referenced buffers are shared, so extracting one field cannot
+mutate the queued frame's metadata. RedSpark's duration multiplication has
+defined unsigned wraparound affecting metadata only, and finite input still
+terminates at AVIO EOF. DNxHD safely continues scanning invalid frame sizes,
+while FLAC's 16-bit maximum block size is supported by its downstream
+allocations.
+
+The remaining filter, codec, hardware, and architecture candidates close under
+their producer invariants. Transpose, APulsator, phase, tonemap, LUT, and
+related filter geometry follows negotiated formats. AltiVec FDCT stores exactly
+the 128-byte coefficient block. The VP8 parser validates partition sizes before
+NVDEC consumes them, and IAMF parsing enforces the layer and substream
+relationships used by the decoder. Successful OpenBSD `sysctl` calls govern
+the CPU-feature values. The selected paths have no post-pin security repair;
+their later changes are benign API, NVDEC, or slice-boundary maintenance.
+
+No new root survives adjudication, so totals remain 134 confirmed root causes
+and 115 dynamically reproduced issues. Historical coverage is 1,956/4,995
+(39.16%), with 3,039 historically ranked files remaining.
+
+Direct deterministic regeneration reproduces ranks 1933–1956 exactly and
+seals ranks 1957–1980 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1957_1980.json` with SHA-256
+`9a8c8664e9b29a8679717a044b2c6f0d8cd97c34ac0b8fcbd38154058b6d2a8f`.
