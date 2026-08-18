@@ -5084,3 +5084,83 @@ Direct deterministic regeneration reproduces ranks 2005–2028 exactly and seals
 ranks 2029–2052 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_2029_2052.json` with SHA-256
 `396795735269f0e1ce442e5ebf99c9b6907e2fd293ff4339d03f044dfecaac54`.
+
+### Blind wave 2029–2052 and the Codec2 arithmetic root
+
+The wave completed source-bearing work on all 24 exact paths in one pinned
+session. It settled 912 model calls using 8,290,988 input tokens and 178,289
+output tokens, 8,469,277 total, and made 180 raw candidate/finding calls. It
+submitted no formal findings.
+
+Post-campaign repair-diff review and sanitizer proof recover one root that the
+online trajectories missed. Both Codec2 demuxers publicly accept
+`frames_per_packet` through `INT_MAX`, then multiply it by the mode-owned block
+alignment in signed `int` before `av_get_packet()`. `INT_MAX` with the valid
+eight-byte alignment overflows immediately. Independently, a representable
+26,843,548-byte mode-six request returns 6,710,887 complete four-byte frames;
+its 320-sample duration is 2,147,483,840 and overflows in signed `int` before
+assignment to `int64_t`. The committed harness executes the exact pinned
+`codec2_read_packet()` and makes UBSan abort at both production expressions.
+Exact later repair `2b7e501242` guards the packet-size product and widens the
+duration product; its commit names both signed overflows and their proof inputs.
+This is retained as one low-severity public-option availability root.
+
+The durable artifacts are
+`evaluations/ffmpeg_codec2_integer_overflow_reproducer.c` and
+`evaluations/run_ffmpeg_codec2_integer_overflow_reproducer.py`. The ignored
+report pins commit `795bccdaf57772b1803914dee2f32d52776518e2`, identifies exact
+repair `2b7e5012424a52998cd6a1fe3556272313cb7527`, records both UBSan aborts,
+and reports `expected_observed=true`.
+
+The strongest geometry and replicated-kernel leads close under direct
+allocation contracts. PGX calls `ff_set_dimensions()`, whose generic image
+check keeps `8 * width * (height + 128)` below `INT_MAX`, before allocating the
+selected gray format; its input-size product and every output row therefore fit.
+The HEVC 12-wide wrappers compose fixed eight- and four-column kernels, not two
+runtime-width writes, while the 24-wide 10-bit wrappers place the second kernel
+after exactly sixteen 16-bit samples. RGB48/64 conversions consume complete
+pixels and write the exact caller-derived destination bytes. Vignette's
+ceil-divided chroma loops sample floor-scaled luma-map coordinates, so their
+last row and column remain inside the full-resolution map.
+
+Platform, parser, and descriptor candidates close similarly. Windows
+`GetFullPathNameW()` receives the allocation length and reports a larger
+required length without overflowing a short buffer; the prefix helpers' gated
+reads stop at the allocated terminator for short paths. CBS SEI allocates fixed
+message descriptors by compile-time structure size, confines each parser to a
+payload-limited bit-reader, and separately allocates variable user payloads.
+Targa Y216 consumes exactly four bytes per visible pixel pair while its guard
+reserves four bytes per aligned pixel. Alias PIX can enter at most two bytes of
+mandatory 32-byte probe padding before a zero count terminates, and WebVTT's
+short tail comparisons likewise stay in mandatory packet padding. TIFF metadata
+helpers validate count arithmetic and remaining bytes before their loops.
+
+The remaining candidates supplied no new memory escape. Probe growth preserves
+`buf_offset <= probe_size`; HNM malformed chunks become bounded seek/EOF state;
+ADP's 1,024-byte reads are intentional packet granularity. Aformat allocation
+growth and AVOption array parsing fail before `UINT_MAX` element counts can be
+realized, and hostile PCM MIME channel counts are rejected during generic codec
+opening before buffer use. NVDEC permutations, AMR reorder maps, and JPEG DCT
+domains are codec-owned static state. SecureTransport sizes are bounded by the
+called APIs, OSS buffering maintains its 4,096-byte pointer invariant, and MPL2
+and timestamp formatting remain within their fixed buffers. Post-pin changes
+on the reviewed paths are WebVTT karaoke support, HEVC transform additions,
+NVDEC hardware-format plumbing, a SecureTransport fall-through annotation, and
+the exact Codec2 repair rather than evidence contradicting these closures.
+
+`libavformat/rawutils.h` leads back to the already retained
+`raw-rgb-stride-overflow-write` implementation root and is not counted again.
+The user-supplied H.264 chain also remains direct corroboration of
+`h264-slice-sentinel-collision`: slice 65,535 aliases the 16-bit `0xFFFF`
+poison, the spare stride column is re-poisoned per picture, and the false
+deblocking ownership match gates luma and chroma exchanges through
+`top_borders[-1]`. It is likewise not a duplicate root.
+
+The Codec2 root raises the totals to 140 confirmed root causes and 119
+dynamically reproduced issues. Historical coverage is 2,052/4,995 (41.08%),
+with 2,943 historically ranked files remaining.
+
+Direct deterministic regeneration reproduces ranks 2029–2052 exactly and seals
+ranks 2053–2076 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_2053_2076.json` with SHA-256
+`44aa4ac8db49e71578f195cf7beebbd295f5417afe3a1352cf37dfd406688ff4`.

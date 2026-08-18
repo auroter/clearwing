@@ -8065,5 +8065,67 @@
         "end": 480
       }
     ]
+  },
+  {
+    "case_id": "codec2-packet-size-duration-signed-overflow",
+    "finding": {
+      "id": "ffmpeg-codec2-packet-size-duration-signed-overflow",
+      "finding_type": "denial_of_service",
+      "cwe": "CWE-190",
+      "file": "libavformat/codec2.c",
+      "line_number": 201,
+      "severity": "low",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The Codec2 demuxers advertise frames_per_packet through INT_MAX but multiply that option by the mode-owned block alignment in signed int before av_get_packet(). INT_MAX with an eight-byte block overflows immediately. Independently, a representable 26,843,548-byte mode-six request yields 6,710,887 complete frames, whose 320-sample duration overflows in signed int before assignment to int64_t. The committed harness executes the exact pinned codec2_read_packet() and makes UBSan abort at both production expressions. Exact later repair 2b7e501242 guards the packet-size product and promotes the duration product to int64_t; the commit identifies both signed overflows and public proof inputs.",
+      "code_snippet": "size = c2->frames_per_packet * block_align; ... pkt->duration = n * frame_size;",
+      "poc": "Run evaluations/run_ffmpeg_codec2_integer_overflow_reproducer.py against the pinned configured tree. It compiles the exact production packet reader and records separate UBSan aborts for the packet-size and duration products.",
+      "discovered_by": "sourcehunt:offline-post-pin-diff",
+      "vulnerability_trace": {
+        "summary": "a public full-range packet batching option and a complete large input reach two unchecked signed-int products in the Codec2 packet reader",
+        "steps": [
+          {
+            "file": "libavformat/codec2.c",
+            "line": 260,
+            "function": "codec2_options",
+            "code_snippet": "{ \"frames_per_packet\", ... AV_OPT_TYPE_INT, {.i64 = 1}, 1, INT_MAX, ... }",
+            "note": "Both Codec2 demuxers publicly accept every positive signed-int batching value."
+          },
+          {
+            "file": "libavformat/codec2.c",
+            "line": 201,
+            "function": "codec2_read_packet",
+            "code_snippet": "size = c2->frames_per_packet * block_align;",
+            "note": "With frames_per_packet=INT_MAX and the valid eight-byte Codec2 block alignment, the mathematical request is 17,179,869,176 bytes; UBSan aborts on the signed multiplication."
+          },
+          {
+            "file": "libavformat/codec2.c",
+            "line": 210,
+            "function": "codec2_read_packet",
+            "code_snippet": "pkt->duration = n * frame_size;",
+            "note": "A representable 26,843,548-byte mode-six request returns 6,710,887 complete four-byte frames. Multiplication by the valid 320-sample frame size produces 2,147,483,840, and UBSan aborts before the int64_t assignment."
+          },
+          {
+            "file": "libavformat/codec2.c",
+            "line": 201,
+            "function": "later repair 2b7e501242",
+            "code_snippet": "if (c2->frames_per_packet > INT_MAX / block_align) return AVERROR(EINVAL); ... pkt->duration = (int64_t)n * frame_size;",
+            "note": "The exact upstream repair bounds the first product and widens the second, naming both signed integer overflows."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/codec2.c",
+        "start": 185,
+        "end": 272
+      },
+      {
+        "path": "libavformat/utils.c",
+        "start": 50,
+        "end": 114
+      }
+    ]
   }
 ]
