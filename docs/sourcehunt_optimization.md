@@ -4685,3 +4685,51 @@ Direct deterministic regeneration reproduces ranks 1837–1860 exactly and
 seals ranks 1861–1884 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1861_1884.json` with SHA-256
 `7259c8596427b6b3484a87fe5bc518a137bf7ad0550dd1701bc7427caa194ec7`.
+
+### Blind wave 1861–1884
+
+The wave completed source-bearing work on all 24 exact paths in one pinned
+session. It settled 940 model calls using 9,303,339 input tokens and 158,091
+output tokens, 9,461,430 total, and made 165 raw candidate/finding calls. It
+submitted no formal findings.
+
+The strongest demuxer and parser leads close under concrete initialization and
+object-lifetime invariants. SDS reads short blocks into the 120-byte `data`
+member of its zero-allocated format-private context, so an initial short read
+decodes zeros and later short reads can retain only prior bytes from the same
+input; it neither reads uninitialized process memory nor leaves the object.
+HEVC PPS parsing rejects a missing SPS before allocation can enter
+`pps_list`, retains its SPS by reference, and removes dependent PPS objects
+when an SPS is replaced. AVIO's apparent `int64_t`-to-`int` reallocation
+truncation is unreachable because each candidate position delta is accepted
+only below `1 << 23` before the maximum is doubled. OSQ's oversized skips and
+Snappy's short literals likewise produce bounded EOF/short-read behavior, not
+memory escapes.
+
+Image, filter, and codec candidates also close. ELBG receives dimensions from
+validated image/frame paths whose stride-by-height checks keep the pixel
+product representable before its allocation and loops. BWDIF rounds every job
+boundary down and maps the final boundary exactly to plane height. LibRSVG
+passes the chosen dimensions through `ff_set_dimensions` and allocates the
+frame before giving Cairo its data and stride. V210X consumes exactly 16 bytes
+per six pixels, S302M's write count matches its output allocation, and DNxHD's
+16-bit coded dimensions keep the frame-size arithmetic representable. PPC and
+MIPS motion kernels inherit the codec's edge-padding contract, while V4L2
+`sizeimage` values remain driver negotiation and error-handling state rather
+than a smaller FFmpeg memory allocation.
+
+The remaining buffer, hardware, EXIF, subtitle, OpenCL, drawbox, DCT, and
+swscale leads did not establish another violated memory or lifetime contract.
+Eight selected files changed on current `origin/master`, but inspection shows
+include/API refactors, hardware-format additions, BWDIF row-selection cleanup,
+ASS non-positive-duration handling, and swscale initialization movement rather
+than a security repair contradicting these closures.
+
+No new root survives adjudication, so totals remain 130 confirmed root causes
+and 112 dynamically reproduced issues. Historical coverage is 1,884/4,995
+(37.72%), with 3,111 historically ranked files remaining.
+
+Direct deterministic regeneration reproduces ranks 1861–1884 exactly and
+seals ranks 1885–1908 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1885_1908.json` with SHA-256
+`18c97fd300ffe6ffee5484b2698720be2496443ef030ae5f0ed4c6bb31767fab`.
