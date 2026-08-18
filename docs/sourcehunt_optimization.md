@@ -4248,3 +4248,85 @@ Direct deterministic regeneration reproduces ranks 1669–1692 exactly and seals
 ranks 1693–1716 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1693_1716.json` with SHA-256
 `725b7960fba6b9818fd6d46122303b72e8f6253ea75b8f66ceeb4e1c5b230335`.
+
+### Blind wave 1693–1716 and four exact-repair roots
+
+The wave completed source-bearing work on all 24 exact paths in one pinned
+session. It settled 896 successful model calls using 8,703,696 input tokens and
+171,840 output tokens, 8,875,536 total, and made 192 raw candidate/finding
+calls. The online scaffold retained no formal finding. Offline invariant and
+post-pin repair review recovered four distinct roots; two reproduce under the
+local sanitizer build and two remain source-confirmed.
+
+Boxblur accepts planar and single-component formats deeper than 16 bits but
+allocates only two temporary bytes per image dimension and treats every
+non-byte format as 16-bit. A public tight 4x4 GRAYF32LE frame therefore gives
+`blur16` a four-byte pixel step while each temporary is only eight bytes. The
+radius-two first pass makes a two-byte write at offset eight, and ASan aborts
+immediately after the allocation. Exact repair `2ec918330e` rejects depths
+above 16 and asserts the two supported pixel sizes.
+
+MACE computes its output sample count in signed int while its decode loop keeps
+the full packet size. A public one-channel MACE3 packet of size `0x55555556`,
+backed by a valid sparse virtual mapping, makes `3 * buf_size` wrap from
+4,294,967,298 to two. FFmpeg consequently allocates two S16P samples, then the
+third production decode write crosses the allocation. UBSan records the count
+overflow and ASan records the heap overflow. Exact repair `947c57d9e6` widens
+the count and rejects values above `INT_MAX`.
+
+Librist's read callback discards its caller's buffer size and copies the whole
+received payload, up to 9,972 bytes. The production `async:` wrapper supplies a
+concrete mismatch: it reserves and asks the inner URL for at most 4,096 bytes,
+so a larger valid RIST payload overruns the FIFO destination. Exact repair
+`8880a174d0` clamps the payload to the caller size and names out-of-array
+access. The pinned sanitizer configuration has neither librist nor network
+support, so this root is not counted as dynamically reproduced.
+
+MCC aliases X and Y intentionally have zero length and a null value. A valid
+MCC time-code line containing either alias passes that null source to
+`bytestream2_put_buffer`, whose inlined `memcpy` is invoked even for the
+zero-byte copy. Exact repair `e27d91ca71` guards the call on nonzero alias length
+and explicitly identifies passing a null pointer. Apple Clang eliminates the
+zero-byte operation without a sanitizer report, so this root is likewise
+recorded at source-confirmed evidence rather than dynamic evidence.
+
+The durable dynamic artifacts are
+`evaluations/run_ffmpeg_boxblur_deep_format_reproducer.py` and
+`evaluations/run_ffmpeg_mace_sample_count_overflow_reproducer.py`, with their
+matching C harnesses. Both ignored reports pin commit
+`795bccdaf57772b1803914dee2f32d52776518e2`, capture the exact later repair, and
+report `expected_observed=true`.
+
+The transient online leads close under concrete contracts. YUVA420P and
+YUVA422P subsample chroma, not alpha, so lumakey's full-width alpha loop matches
+the allocated plane. DVD navigation's PCI and DSI copies are fixed at 980 and
+1,018 bytes and concatenate exactly into the 1,998-byte parser buffer. The
+SVT-JPEG-XS bitrate is an application encoder setting rather than media input,
+and the external encoder validates the derived configuration; the lead had no
+concrete memory-safety sink.
+
+The remaining demuxer and muxer paths are bounded. MicroDVD caps each line at
+2,048 bytes and uses 64-bit subtitle timing arithmetic. Vivo's coded length is
+at most two seven-bit bytes and its text header has a separate 1,024-byte cap;
+OGM uses bounded byte readers and validates its direct-show header sizes. ICO
+restricts geometry to 256x256 and relies on mandatory packet padding for its
+fixed header probes, while nonpositive AVIO write lengths are ignored. AST and
+VOC operate on framework-validated audio parameters and bounded AVIO reads.
+
+Codec and platform helpers also retain their upstream contracts. AAC coupling
+bands and FLV bit fields are validated by their parsers; bitpacked, DSD, GSM,
+DVD navigation, and Lagarith operate on checked packet or codec-owned sizes.
+The AArch64 and MIPS files select or define kernels whose padding and block
+geometry belong to their callers, and the display helper touches only its
+fixed nine-element matrix. D3D12 motion estimation, VideoToolbox transpose,
+and SVT-JPEG-XS use negotiated frame geometry and API-reported resource
+footprints.
+
+The four roots raise the totals to 124 confirmed root causes and 107
+dynamically reproduced issues. Coverage is 1,716/4,995 (34.35%), with 3,279
+historically ranked files remaining.
+
+Direct deterministic regeneration reproduces ranks 1693–1716 exactly and seals
+ranks 1717–1740 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1717_1740.json` with SHA-256
+`d3a5acd933eea660486e9e336f11c6d604884495f6aace6cf1df4a13eb9a5bf0`.

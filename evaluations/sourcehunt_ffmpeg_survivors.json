@@ -6612,5 +6612,298 @@
         "end": 410
       }
     ]
+  },
+  {
+    "case_id": "boxblur-deep-format-temporary-heap-overflow",
+    "finding": {
+      "id": "ffmpeg-boxblur-deep-format-temporary-heap-overflow",
+      "finding_type": "out_of_bounds_write",
+      "cwe": "CWE-787",
+      "file": "libavfilter/vf_boxblur.c",
+      "line_number": 143,
+      "severity": "high",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "Boxblur accepts planar and single-component pixel formats deeper than 16 bits but allocates only two temporary bytes per image dimension and routes every non-byte format through its 16-bit blur. A public tight 4x4 GRAYF32LE frame therefore supplies a four-byte pixel stride to blur16 while its temporary allocation remains eight bytes. The radius-two first pass writes two bytes at temporary offset eight, immediately beyond that allocation, and ASan aborts in the production blur path. Exact later repair 2ec918330e rejects depths above 16 and asserts that the remaining pixel sizes are one or two bytes.",
+      "code_snippet": "s->temp[0] = av_malloc(2*FFMAX(w, h)); ... else blur16(..., dst_step>>1, ..., src_step>>1, ...);",
+      "poc": "Run evaluations/run_ffmpeg_boxblur_deep_format_reproducer.py against the configured sanitizer build. Its ignored report records the public GRAYF32LE frame, eight-byte temporary, production blur trace, exact repair, ASan heap write, and expected_observed=true.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a public 32-bit planar format reaches a 16-bit-only temporary whose writes use the four-byte source pixel stride",
+        "steps": [
+          {
+            "file": "libavfilter/vf_boxblur.c",
+            "line": 67,
+            "function": "query_formats",
+            "code_snippet": "desc->flags & AV_PIX_FMT_FLAG_PLANAR || desc->nb_components == 1",
+            "note": "The vulnerable format query accepts single-component GRAYF32LE without limiting component depth."
+          },
+          {
+            "file": "libavfilter/vf_boxblur.c",
+            "line": 85,
+            "function": "config_input",
+            "code_snippet": "s->temp[0] = av_malloc(2*FFMAX(w, h))",
+            "note": "The 4x4 proof gets only eight temporary bytes per dimension, sufficient solely for 16-bit samples."
+          },
+          {
+            "file": "libavfilter/vf_boxblur.c",
+            "line": 166,
+            "function": "blur",
+            "code_snippet": "else blur16((uint16_t*)dst, dst_step>>1, ...)",
+            "note": "Every non-byte format, including 32-bit float, is treated as 16-bit while retaining the caller's four-byte pixel step."
+          },
+          {
+            "file": "libavfilter/vf_boxblur.c",
+            "line": 143,
+            "function": "blur16",
+            "code_snippet": "dst[x*dst_step] = sum>>16;",
+            "note": "For radius two, the third write lands at byte offset eight; ASan reports the two-byte write immediately after the eight-byte temporary."
+          },
+          {
+            "file": "libavfilter/vf_boxblur.c",
+            "line": 68,
+            "function": "later repair 2ec918330e",
+            "code_snippet": "desc->comp[0].depth <= 16",
+            "note": "The exact later heap-overflow repair excludes precisely the unsupported deep formats and asserts the surviving pixel sizes."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/vf_boxblur.c",
+        "start": 58,
+        "end": 111
+      },
+      {
+        "path": "libavfilter/vf_boxblur.c",
+        "start": 128,
+        "end": 190
+      },
+      {
+        "path": "libavfilter/vf_boxblur.c",
+        "start": 229,
+        "end": 260
+      }
+    ]
+  },
+  {
+    "case_id": "mace-sample-count-overflow-undersized-output",
+    "finding": {
+      "id": "ffmpeg-mace-sample-count-overflow-undersized-output",
+      "finding_type": "out_of_bounds_write",
+      "cwe": "CWE-787",
+      "file": "libavcodec/mace.c",
+      "line_number": 198,
+      "severity": "high",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The MACE decoder computes its frame sample count in signed int but retains the full packet size for the decode loops. A public one-channel MACE3 packet of size 0x55555556 makes 3*buf_size overflow from 4,294,967,298 to two samples, so FFmpeg allocates only a four-byte S16P output. The production loop still decodes the sparse-mapped 1.4 GB packet and its third output sample already writes beyond that allocation. UBSan records the signed overflow and ASan immediately records the heap overflow. Exact later repair 947c57d9e6 performs the sample calculation in int64 and rejects values above INT_MAX.",
+      "code_snippet": "frame->nb_samples = 3 * (buf_size << (1 - is_mace3)) / channels; ... for (j=0; j < buf_size / (channels << is_mace3); j++)",
+      "poc": "Run evaluations/run_ffmpeg_mace_sample_count_overflow_reproducer.py against the configured sanitizer build. Its ignored report records the valid sparse packet mapping, signed overflow, production decode-loop heap write, exact repair, and expected_observed=true.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "MACE's signed sample-count expression wraps to two while its output loop remains proportional to the original 1.4 GB packet",
+        "steps": [
+          {
+            "file": "libavcodec/mace.c",
+            "line": 247,
+            "function": "mace_decode_frame",
+            "code_snippet": "if (buf_size % (channels << is_mace3))",
+            "note": "The one-channel MACE3 proof size is even and passes the decoder's only packet-size normalization unchanged."
+          },
+          {
+            "file": "libavcodec/mace.c",
+            "line": 255,
+            "function": "mace_decode_frame",
+            "code_snippet": "frame->nb_samples = 3 * (buf_size << (1 - is_mace3)) / channels;",
+            "note": "For size 0x55555556, signed 3*buf_size overflows to two; UBSan diagnoses this exact expression."
+          },
+          {
+            "file": "libavcodec/mace.c",
+            "line": 256,
+            "function": "mace_decode_frame",
+            "code_snippet": "ff_get_buffer(avctx, frame, 0)",
+            "note": "The wrapped count allocates only two planar signed-16 samples."
+          },
+          {
+            "file": "libavcodec/mace.c",
+            "line": 263,
+            "function": "mace_decode_frame",
+            "code_snippet": "j < buf_size / (channels << is_mace3)",
+            "note": "The production decode loop remains bounded by the original packet size rather than the wrapped frame count."
+          },
+          {
+            "file": "libavcodec/mace.c",
+            "line": 198,
+            "function": "chomp3",
+            "code_snippet": "*output = QT_8S_2_16S(current);",
+            "note": "The third invocation writes immediately beyond the four-byte output, producing the ASan heap overflow."
+          },
+          {
+            "file": "libavcodec/mace.c",
+            "line": 255,
+            "function": "later repair 947c57d9e6",
+            "code_snippet": "int64_t nb_samples = 3 * ((int64_t)buf_size << ...); if (nb_samples > INT_MAX) return AVERROR_INVALIDDATA;",
+            "note": "The exact later heap-overflow repair widens and bounds precisely the vulnerable count."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/mace.c",
+        "start": 185,
+        "end": 285
+      }
+    ]
+  },
+  {
+    "case_id": "librist-read-caller-buffer-overflow",
+    "finding": {
+      "id": "ffmpeg-librist-read-caller-buffer-overflow",
+      "finding_type": "out_of_bounds_write",
+      "cwe": "CWE-787",
+      "file": "libavformat/librist.c",
+      "line_number": 230,
+      "severity": "high",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "librist_read ignores its public URLProtocol caller's destination size and replaces it with the received RIST payload length before copying. A valid payload may contain up to 9,972 bytes, while wrappers can provide a smaller destination; FFmpeg's async wrapper concretely asks its inner URL for at most 4,096 bytes backed by that amount of FIFO space. A larger RIST payload therefore overruns the caller-owned FIFO destination. Exact later repair 8880a174d0 clamps payload_len to the supplied size and explicitly identifies out-of-array access. The local sanitizer build lacks librist and network support, so this root remains source-confirmed rather than dynamically reproduced.",
+      "code_snippet": "size = data_block->payload_len; memcpy(buf, data_block->payload, size);",
+      "poc": "Open async:rist://... so async's background ring requests 4096 bytes, then deliver a valid RIST payload larger than 4096 bytes. The vulnerable protocol copies the full payload into that smaller FIFO span; exact repair 8880a174d0 changes the assignment to FFMIN(data_block->payload_len, size).",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "the RIST URL protocol discards its caller's capacity and copies a larger received payload into the smaller destination",
+        "steps": [
+          {
+            "file": "libavformat/async.c",
+            "line": 233,
+            "function": "async_buffer_task",
+            "code_snippet": "to_copy = FFMIN(4096, fifo_space);",
+            "note": "The async wrapper exposes a concrete production caller that reserves and requests at most 4,096 bytes."
+          },
+          {
+            "file": "libavformat/async.c",
+            "line": 138,
+            "function": "wrapped_url_read",
+            "code_snippet": "ret = ffurl_read(c->inner, dst, *size);",
+            "note": "That exact reserved size is forwarded as the inner URL protocol's public read capacity."
+          },
+          {
+            "file": "libavformat/librist.c",
+            "line": 214,
+            "function": "librist_read",
+            "code_snippet": "if (data_block->payload_len > MAX_PAYLOAD_SIZE)",
+            "note": "RIST payloads through 9,972 bytes are accepted, which can exceed async's 4,096-byte destination."
+          },
+          {
+            "file": "libavformat/librist.c",
+            "line": 229,
+            "function": "librist_read",
+            "code_snippet": "size = data_block->payload_len;",
+            "note": "The caller-provided capacity is discarded and replaced with attacker-controlled received length."
+          },
+          {
+            "file": "libavformat/librist.c",
+            "line": 230,
+            "function": "librist_read",
+            "code_snippet": "memcpy(buf, data_block->payload, size);",
+            "note": "The full payload is copied past the caller-owned FIFO span; exact repair 8880a174d0 clamps this size."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/librist.c",
+        "start": 200,
+        "end": 234
+      },
+      {
+        "path": "libavformat/async.c",
+        "start": 132,
+        "end": 154
+      },
+      {
+        "path": "libavformat/async.c",
+        "start": 224,
+        "end": 235
+      }
+    ]
+  },
+  {
+    "case_id": "mcc-zero-length-null-alias-ub",
+    "finding": {
+      "id": "ffmpeg-mcc-zero-length-null-alias-ub",
+      "finding_type": "null_pointer_dereference",
+      "cwe": "CWE-476",
+      "file": "libavformat/mccdec.c",
+      "line_number": 316,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "MCC compressed aliases X and Y map to keys 33 and 34 with length zero and value NULL. A public time-code line containing either alias reaches bytestream2_put_buffer, which unconditionally passes that NULL source to memcpy even though the selected length is zero. Passing a null pointer to the library copy operation violates its pointer precondition. Exact later repair e27d91ca71 skips bytestream2_put_buffer whenever the alias length is zero and explicitly identifies passing a NULL pointer. Apple Clang optimizes the zero-byte copy away without a sanitizer diagnostic, so this root is source-confirmed rather than counted as dynamically reproduced.",
+      "code_snippet": "{ .key = 33, .len = 0, .value = NULL }; ... bytestream2_put_buffer(&pb, aliases[idx].value, aliases[idx].len);",
+      "poc": "Open an MCC input containing `File Format=MacCaption_MCC V2.0`, `Time Code Rate=30`, and `00:00:00:00\\tX`. The production header parser selects alias index 17 and passes NULL with size zero to bytestream2_put_buffer; exact repair e27d91ca71 guards the call with aliases[idx].len.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "ordinary MCC aliases X and Y select zero-length NULL values that are nevertheless forwarded to the byte-writer's memcpy",
+        "steps": [
+          {
+            "file": "libavformat/mccdec.c",
+            "line": 109,
+            "function": "aliases",
+            "code_snippet": "{ .key = 33, .len =  0, .value = NULL, }",
+            "note": "Public compressed alias X deliberately has a zero length and null value; Y has the same representation."
+          },
+          {
+            "file": "libavformat/mccdec.c",
+            "line": 312,
+            "function": "mcc_read_header",
+            "code_snippet": "uint8_t v = convert(*line_left++);",
+            "note": "An X in a valid time-code line converts to key 33 and selects alias index 17."
+          },
+          {
+            "file": "libavformat/mccdec.c",
+            "line": 316,
+            "function": "mcc_read_header",
+            "code_snippet": "bytestream2_put_buffer(&pb, aliases[idx].value, aliases[idx].len);",
+            "note": "The parser forwards the selected NULL value without checking its zero length."
+          },
+          {
+            "file": "libavcodec/bytestream.h",
+            "line": 296,
+            "function": "bytestream2_put_buffer",
+            "code_snippet": "memcpy(p->buffer, src, size2);",
+            "note": "The inlined byte writer unconditionally invokes the library copy with the null source."
+          },
+          {
+            "file": "libavformat/mccdec.c",
+            "line": 316,
+            "function": "later repair e27d91ca71",
+            "code_snippet": "if (aliases[idx].len) bytestream2_put_buffer(...);",
+            "note": "The exact later repair skips precisely the NULL zero-length aliases and names the invalid pointer passage."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/mccdec.c",
+        "start": 79,
+        "end": 112
+      },
+      {
+        "path": "libavformat/mccdec.c",
+        "start": 286,
+        "end": 325
+      },
+      {
+        "path": "libavcodec/bytestream.h",
+        "start": 286,
+        "end": 299
+      }
+    ]
   }
 ]
