@@ -4996,3 +4996,91 @@ Direct deterministic regeneration reproduces ranks 1981–2004 exactly and seals
 ranks 2005–2028 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_2005_2028.json` with SHA-256
 `401079aa57821d5e673424280d998c7c9d4d86f6e721181ea5d6e05865782937`.
+
+### Blind wave 2005–2028 and two offline-recovered roots
+
+The wave completed source-bearing work on all 24 exact paths in one pinned
+session. It settled 923 model calls using 9,050,848 input tokens and 155,092
+output tokens, 9,205,940 total, and made 185 raw candidate/finding calls. It
+submitted no formal findings.
+
+Offline adjudication dynamically confirms an odd-width source over-read in the
+YUV4 encoder. The encoder accepts YUV420P and loops over ceiling-half width, but
+unconditionally reads two luma samples per chroma group. At odd width, the final
+second sample is `y[width]`. A valid public refcounted 3x3 frame with exact
+nine-byte luma and four-byte chroma allocations makes ASan report a one-byte
+heap-buffer-overflow read in `yuv4_encode_frame` immediately after the luma
+allocation. The assignment copies that byte into the encoded packet. Historical
+repair `d33c630b2a` fixed odd-height traversal while retaining this independent
+odd-width boundary, and current `origin/master` remains affected.
+
+The PDV decoder contains a separate source-confirmed allocation-amplification
+root. It calls `ff_get_buffer()` for the complete container-declared monochrome
+frame before proving that the compressed packet could produce that many bytes.
+Exact repair `b801f1fe6d` adds a pre-allocation check against deflate's
+theoretical 1032:1 expansion limit. The commit explicitly identifies a timeout,
+OSS-Fuzz issue 474457186, and testcase
+`ffmpeg_AV_CODEC_ID_PDV_fuzzer-5366108782919680`. The public testcase was not
+replayed locally, so this root does not increment the dynamic total.
+
+The durable YUV4 artifacts are
+`evaluations/ffmpeg_yuv4_odd_width_reproducer.c` and
+`evaluations/run_ffmpeg_yuv4_odd_width_reproducer.py`. The ignored report pins
+commit `795bccdaf57772b1803914dee2f32d52776518e2` and records
+`expected_observed=true`. Both roots are retained in the survivor registry.
+
+The strongest fixed-buffer and minimum-geometry leads close under direct
+source contracts. WHIP formats the remote and local ICE fragments into a
+128-byte username and rejects every truncating `snprintf` result, leaving its
+4,096-byte STUN buffer ample for all fixed attributes. CFHD rejects every
+low-pass width or height below three before calling the filter whose endpoint
+formula needs three samples. `ff_load_image` pins the image2pipe demuxer, whose
+successful header path creates stream zero before returning. Every CBS reference
+offset descriptor is a compile-time initializer capped by
+`CBS_MAX_REF_OFFSETS=2`, not a media-controlled count.
+
+Codec, SIMD, and bitstream candidates close similarly. Opus validates its frame
+count and every packet span before publishing offsets. HEVC's Annex-B filter
+grows its destination by exactly the copied NAL and extradata sizes. MIPS HEVC
+IDCT writes the complete selected transform block, while LoongArch VP9, tpel,
+and scaler kernels inherit codec-owned edge padding, validated geometry, and
+generated filter-position contracts. `ff_copy_bits` relies on the documented
+input padding its packet and codec callers provide. ProRes dimensions pass
+generic image validation before allocation, ATRAC indices come from bounded VLC
+and static-table domains, and MUSX's arbitrary seek produces bounded EOF or
+misparsed audio rather than a memory escape.
+
+Ownership and API review rejects the remaining memory-safety leaps. RefStruct
+operations are thread-safe between independently owned references; attempting
+to acquire a new reference after another thread surrenders the final reference
+is ordinary invalid ownership. BufferSrc does move a refcounted frame before a
+downstream error can violate its documented untouched-on-error promise, but the
+move clears the caller's frame and transfers ownership to the downstream path;
+the alleged UAF or double-free does not follow. `av_assert0` is always enabled,
+and AMF's supported surfaces keep their plane count within the local arrays.
+PDV has no parameter-change capability, so its saved reference frame cannot
+undergo the proposed media-driven geometry mismatch. VidStab and emulated-edge
+motion compensation receive negotiated frame geometry and strides.
+
+All `ff_format_shift_data` production callers derive positive sizes; oversized
+implicit conversions fail allocation rather than creating a small successful
+buffer. The post-pin PPC VP8 change replaces aligned vector stores with general
+unaligned stores, but decoder-provided planes and strides already satisfy the
+documented CPU alignment contract. Other selected-path changes are x86
+emulated-edge implementation, AMF mapping and HEVC packet-side-extradata
+features, API qualification, and cosmetic maintenance rather than additional
+security repairs.
+
+The user-supplied H.264 slice-table chain remains independent corroboration of
+`h264-slice-sentinel-collision`: the `0xFFFF` poison, per-picture spare-column
+re-poisoning, deblocking-only equality, `top_borders[-1]`, and 96-byte record
+underflow all match the retained mechanism. It is not counted again.
+
+These two roots raise the totals to 139 confirmed root causes and 118
+dynamically reproduced issues. Historical coverage is 2,028/4,995 (40.60%),
+with 2,967 historically ranked files remaining.
+
+Direct deterministic regeneration reproduces ranks 2005–2028 exactly and seals
+ranks 2029–2052 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_2029_2052.json` with SHA-256
+`396795735269f0e1ce442e5ebf99c9b6907e2fd293ff4339d03f044dfecaac54`.

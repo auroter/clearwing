@@ -7936,5 +7936,134 @@
         "end": 673
       }
     ]
+  },
+  {
+    "case_id": "pdv-impossible-deflate-allocation-amplification",
+    "finding": {
+      "id": "ffmpeg-pdv-impossible-deflate-allocation-amplification",
+      "finding_type": "denial_of_service",
+      "cwe": "CWE-400",
+      "file": "libavcodec/pdvdec.c",
+      "line_number": 80,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "root_cause_explained",
+      "description": "The PDV decoder allocates a complete MONOBLACK frame from container-declared dimensions before establishing that the compressed packet can produce that many output bytes. A very small packet paired with large accepted dimensions can therefore force a disproportionately large allocation and initialization even though its deflate stream is mathematically incapable of filling the frame. Exact later repair b801f1fe6d adds a pre-allocation 1032:1 theoretical-deflate-ratio check. Its commit identifies a timeout, OSS-Fuzz issue 474457186, and testcase ffmpeg_AV_CODEC_ID_PDV_fuzzer-5366108782919680. The public testcase was not replayed locally, so this remains source-confirmed rather than counted as a local dynamic reproduction.",
+      "code_snippet": "if ((ret = ff_get_buffer(avctx, frame, AV_GET_BUFFER_FLAG_REF)) < 0)",
+      "poc": "Build the pinned PDV decoder with the OSS-Fuzz harness and replay ffmpeg_AV_CODEC_ID_PDV_fuzzer-5366108782919680. Exact repair b801f1fe6d6c9b20d7010367c92860584f83d7f5 rejects packets for which avpkt->size * 1032 is smaller than the declared frame byte count before ff_get_buffer().",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "container dimensions determine a full decoded-frame allocation before the compressed packet is checked against deflate's maximum possible expansion ratio",
+        "steps": [
+          {
+            "file": "libavformat/pdvdec.c",
+            "line": 67,
+            "function": "pdv_read_header",
+            "code_snippet": "par->width = avio_rl16(pb); par->height = avio_rl16(pb);",
+            "note": "The PDV header independently supplies 16-bit frame dimensions."
+          },
+          {
+            "file": "libavcodec/pdvdec.c",
+            "line": 80,
+            "function": "decode_frame",
+            "code_snippet": "ff_get_buffer(avctx, frame, AV_GET_BUFFER_FLAG_REF)",
+            "note": "The vulnerable ordering allocates and initializes storage for the complete declared frame before consulting the compressed packet."
+          },
+          {
+            "file": "libavcodec/pdvdec.c",
+            "line": 84,
+            "function": "decode_frame",
+            "code_snippet": "zstream->avail_in = avpkt->size;",
+            "note": "Only after allocation does the decoder give zlib the independently bounded packet bytes."
+          },
+          {
+            "file": "libavcodec/pdvdec.c",
+            "line": 80,
+            "function": "later repair b801f1fe6d",
+            "code_snippet": "if (avpkt->size * 1032LL < ((avctx->width + 7) >> 3) * avctx->height) return AVERROR_INVALIDDATA;",
+            "note": "The exact OSS-Fuzz timeout repair rejects streams exceeding deflate's theoretical 1032:1 asymptotic expansion before allocating the output frame."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/pdvdec.c",
+        "start": 60,
+        "end": 120
+      },
+      {
+        "path": "libavformat/pdvdec.c",
+        "start": 43,
+        "end": 129
+      },
+      {
+        "path": "libavcodec/get_buffer.c",
+        "start": 84,
+        "end": 135
+      }
+    ]
+  },
+  {
+    "case_id": "yuv4-odd-width-luma-overread",
+    "finding": {
+      "id": "ffmpeg-yuv4-odd-width-luma-overread",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavcodec/yuv4enc.c",
+      "line_number": 63,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The YUV4 encoder accepts YUV420P and iterates ceiling(width / 2) chroma groups, but unconditionally reads two luma samples for every group. At odd width, the final group's second sample is y[width], one byte beyond the logical row. Ordinary multi-row frames make early instances alias the next row, while the final row escapes a tightly allocated luma plane and the read byte is copied into the encoded packet. A valid public refcounted 3x3 frame with exact nine-byte luma and four-byte chroma allocations makes ASan report a one-byte heap-buffer-overflow read at yuv4enc.c:63 immediately after the luma allocation. Historical repair d33c630b2a fixed odd-height traversal but retained this independent odd-width boundary, and current origin/master remains affected.",
+      "code_snippet": "for (int j = 0; j < (avctx->width + 1) / 2; j++) { ... *dst++ = y[2 * j + 1]; }",
+      "poc": "Run evaluations/run_ffmpeg_yuv4_odd_width_reproducer.py against the pinned configured tree. It sends an exact-size public 3x3 YUV420P AVFrame through the production encoder callback and records ASan's one-byte read immediately after the nine-byte luma allocation.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a ceiling-half-width group loop always consumes two luma bytes, so the second byte of the final group at odd width crosses the row and ultimately the plane allocation",
+        "steps": [
+          {
+            "file": "libavcodec/yuv4enc.c",
+            "line": 79,
+            "function": "ff_yuv4_encoder",
+            "code_snippet": "CODEC_PIXFMTS(AV_PIX_FMT_YUV420P)",
+            "note": "The public encoder advertises planar 4:2:0 input, whose odd dimensions use ceil-divided chroma planes."
+          },
+          {
+            "file": "libavcodec/yuv4enc.c",
+            "line": 45,
+            "function": "yuv4_encode_frame",
+            "code_snippet": "for (int j = 0; j < (avctx->width + 1) / 2; j++)",
+            "note": "An odd width executes one final group for the unpaired luma column."
+          },
+          {
+            "file": "libavcodec/yuv4enc.c",
+            "line": 49,
+            "function": "yuv4_encode_frame",
+            "code_snippet": "*dst++ = y[2 * j + 1];",
+            "note": "For the final group, 2*j+1 equals width; the ordinary two-row path reads across both row boundaries."
+          },
+          {
+            "file": "libavcodec/yuv4enc.c",
+            "line": 63,
+            "function": "yuv4_encode_frame",
+            "code_snippet": "*dst++ = y[2 * j + 1];",
+            "note": "On the odd final row of the 3x3 reproducer, this is luma index nine. ASan reports a one-byte read zero bytes after the exact nine-byte allocation, and the assignment makes the byte packet-visible."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavcodec/yuv4enc.c",
+        "start": 27,
+        "end": 81
+      },
+      {
+        "path": "libavutil/frame.h",
+        "start": 430,
+        "end": 480
+      }
+    ]
   }
 ]
