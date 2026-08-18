@@ -4577,3 +4577,63 @@ initial prefix as the only gaps before that frontier. This avoids transferring
 the ignored historical result archive and seals ranks 1813–1836 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1813_1836.json` with SHA-256
 `aabd84ba692b81f85f461ae11291b3901d8bd55248a644079e7d76f841bcc72f`.
+
+### Blind wave 1813–1836 and unvalidated SOFA shape over-read
+
+The wave completed source-bearing work on all 24 exact paths in one pinned
+session. It settled 910 model calls using 8,793,725 input tokens and 166,676
+output tokens, 8,960,401 total, and made 167 raw candidate/finding calls. It
+submitted no formal findings.
+
+Offline adjudication dynamically confirms the model's `sofa2wavs` candidate.
+The utility accepts the result of raw `mysofa_load` without calling
+`mysofa_check`, then assumes every one of the `M` measurements owns three
+`SourcePosition` floats. Libmysofa's bundled `GeneralFIR-E` test fixture is
+structurally loadable with `err=0`, `M=3`, and a single shared `I,C` position
+containing three floats. At measurement one, the utility therefore reads float
+index three. ASan reports a four-byte heap-buffer-overflow read exactly after
+the 12-byte allocation at `tools/sofa2wavs.c:68`. FFmpeg's `af_sofalizer`
+independently demonstrates the omitted contract by calling `mysofa_check`
+after the same loader. Current `origin/master` retains byte-identical
+`sofa2wavs.c` source.
+
+The durable artifacts are
+`evaluations/run_ffmpeg_sofa2wavs_source_position_reproducer.py` and
+`evaluations/ffmpeg_sofa2wavs_shape_probe.c`. The ignored report pins FFmpeg
+commit `795bccdaf57772b1803914dee2f32d52776518e2`, libmysofa commit
+`90531bdb0b485dd36e8a14b3e37ce1c47c54d669`, and fixture SHA-256
+`ebb60f3519acb374e36a76e1fe599593ab582c7b4cd3b8880216266b88be5aa9`;
+it reports `expected_observed=true`.
+
+The strongest codec leads close under concrete ownership and padding
+contracts. AV1 CBS insertion takes its own `content_ref`, so fragment reset
+does not create a dangling reference. CFHD's 2,088-entry scratch array covers
+at most 528 generated entries from the 264-input table. Dirac's unconditional
+eight-value VLC batches are backed by an explicit eight-element caller pad,
+and the arithmetic-decoder lead did not establish a negative fresh-block bit
+count. VC-1 parser tail reads stay in mandatory parser padding. BMVAUDIO
+dispatch requires nonempty packets and its size check covers later reads. MQ
+state values index the separate 94-entry transition tables; they are not
+indices into the 19 context slots. AAC psychoacoustic group maps are validated
+static channel layouts whose paired and single channels match the allocation.
+
+The remaining format, filter, hardware, and scaler leads also close. MVI, AST,
+and LVF oversized fields produce bounded allocations, short reads, or OOM
+rather than an undersized writable object. XVAG's negative skip is a failed or
+bounded seek, and the PNG parser hypothesis supplied no downstream memory
+escape. VAAPI MJPEG/VC-1 bitplanes use stride-compatible allocations. AArch64
+scaler dispatch follows pixel-format validation, while hscale line pointers
+inherit slice-scheduler availability. Scale expressions use 64-bit
+intermediates, a 1–256 divisibility option, and final 32-bit dimension checks.
+Cue frames remain valid peeks or refreshed peeks. Fsync's buffer retains its
+sentinel terminator. Deband, trim, owdenoise, and the remaining low-confidence
+filter leads supplied no surviving memory-safety trace.
+
+The SOFA root raises the totals to 130 confirmed root causes and 112
+dynamically reproduced issues. Historical coverage is 1,836/4,995 (36.76%),
+with 3,159 historically ranked files remaining.
+
+Direct deterministic regeneration reproduces ranks 1813–1836 exactly and
+seals ranks 1837–1860 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1837_1860.json` with SHA-256
+`5665aab6ae54163022ec8ef08b7a4841e92cc3943ecbfe46294232e3ada7cdf7`.

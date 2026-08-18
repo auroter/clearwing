@@ -7284,5 +7284,81 @@
         "end": 225
       }
     ]
+  },
+  {
+    "case_id": "sofa2wavs-unvalidated-source-position-overread",
+    "finding": {
+      "id": "ffmpeg-sofa2wavs-unvalidated-source-position-overread",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "tools/sofa2wavs.c",
+      "line_number": 68,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The sofa2wavs utility accepts any structurally loadable SOFA file through raw mysofa_load but never calls mysofa_check or validates the array shapes it assumes. Libmysofa's valid GeneralFIR-E testfile has three measurements but one shared I,C SourcePosition triplet. mysofa_load returns it with err=0, M=3, and three SourcePosition floats. On measurement one, sofa2wavs reads SourcePosition.values[3], exactly after the 12-byte heap allocation. The exact pinned tool and libmysofa fixture deterministically abort under ASan on a four-byte heap-buffer-overflow read at sofa2wavs.c:68. FFmpeg's sofalizer filter independently demonstrates the missing contract by calling mysofa_check after the same raw loader.",
+      "code_snippet": "hrtf = mysofa_load(argv[1], &err); ... for (i = 0; i < hrtf->M; i++) { int azi = hrtf->SourcePosition.values[i * 3]; }",
+      "poc": "Run evaluations/run_ffmpeg_sofa2wavs_source_position_reproducer.py against pinned FFmpeg commit 795bccdaf57772b1803914dee2f32d52776518e2 and libmysofa commit 90531bdb0b485dd36e8a14b3e37ce1c47c54d669. The runner compiles unmodified tools/sofa2wavs.c with ASan and passes libmysofa tests/testfile.sofa.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a raw SOFA loader accepts a convention with one shared source triplet, then FFmpeg's utility treats the measurement count as the number of triplets and reads the second triplet beyond a three-float heap allocation",
+        "steps": [
+          {
+            "file": "libmysofa/src/hrtf/reader.c",
+            "line": 212,
+            "function": "getArray",
+            "code_snippet": "array->values = realloc(dataobject->data, array->elements * sizeof(float));",
+            "note": "The GeneralFIR-E fixture's I,C SourcePosition is materialized as exactly three floats in a 12-byte allocation."
+          },
+          {
+            "file": "libmysofa/src/hrtf/reader.c",
+            "line": 372,
+            "function": "getHrtf",
+            "code_snippet": "return hrtf;",
+            "note": "The raw loader requires the six dimensions and I=1/C=3 but returns parsed arrays without convention or cross-array semantic validation; the fixture loads with err=0."
+          },
+          {
+            "file": "libavfilter/af_sofalizer.c",
+            "line": 150,
+            "function": "load_sofa",
+            "code_snippet": "ret = mysofa_check(mysofa);",
+            "note": "FFmpeg's production filter enforces the semantic check after mysofa_load and rejects unsupported SOFA conventions."
+          },
+          {
+            "file": "tools/sofa2wavs.c",
+            "line": 44,
+            "function": "main",
+            "code_snippet": "hrtf = mysofa_load(argv[1], &err);",
+            "note": "The utility uses only the raw loader result and omits the check used by af_sofalizer."
+          },
+          {
+            "file": "tools/sofa2wavs.c",
+            "line": 62,
+            "function": "main",
+            "code_snippet": "for (i = 0; i < hrtf->M; i++)",
+            "note": "The fixture's M=3 controls three iterations even though its shared SourcePosition contains only one triplet."
+          },
+          {
+            "file": "tools/sofa2wavs.c",
+            "line": 68,
+            "function": "main",
+            "code_snippet": "int azi = hrtf->SourcePosition.values[i * 3];",
+            "note": "At i=1 the utility reads float index three, and ASan reports a four-byte heap-buffer-overflow zero bytes after the exact 12-byte allocation."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "tools/sofa2wavs.c",
+        "start": 33,
+        "end": 105
+      },
+      {
+        "path": "libavfilter/af_sofalizer.c",
+        "start": 132,
+        "end": 160
+      }
+    ]
   }
 ]
