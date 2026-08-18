@@ -10186,5 +10186,218 @@
         "end": 548
       }
     ]
+  },
+  {
+    "case_id": "asoftclip-channel-slice-signed-overflow-oob-read",
+    "finding": {
+      "id": "ffmpeg-asoftclip-channel-slice-signed-overflow-oob-read",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-190",
+      "file": "libavfilter/af_asoftclip.c",
+      "line_number": 413,
+      "severity": "low",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "ASoftClip partitions planar audio channels with two unchecked signed-int total-times-job products. A valid unspecified 65,536-channel layout and 65,536 explicitly configured graph threads dispatch job 32,768. UBSan reports 65,536 times 32,768 overflowing at the production callback. Ordinary wrapping selects channel slice [-32768,-32767), and an ASan-instrumented callback reports the resulting negative channel-pointer-array read. Exact repair f7368f97b92a0afe8dc8368a4b6749704b740317 replaces both products with the int64-based ff_slice_pos helper and processes channel 32,768 cleanly. This is a distinct callback implementation from the earlier AEmphasis and video-filter slice roots fixed by the same broad commit.",
+      "code_snippet": "const int start = (channels * jobnr) / nb_jobs; const int end = (channels * (jobnr+1)) / nb_jobs; s->filter(..., start, end);",
+      "poc": "Run evaluations/run_ffmpeg_asoftclip_slice_overflow_reproducer.py against the pinned configured tree. It records the exact signed overflow under UBSan and the wrapped negative channel-pointer read under ASan, then compiles and runs the exact ff_slice_pos repaired source cleanly.",
+      "discovered_by": "sourcehunt:offline-repair-diff-plus-dynamic-proof",
+      "vulnerability_trace": {
+        "summary": "a public high-channel-count layout and matching graph thread count overflow ASoftClip's channel-slice product and select a channel before both frame pointer arrays",
+        "steps": [
+          {
+            "file": "libavutil/channel_layout.c",
+            "line": 802,
+            "function": "av_channel_layout_check",
+            "code_snippet": "case AV_CHANNEL_ORDER_UNSPEC: return 1;",
+            "note": "A positive unspecified layout with 65,536 channels passes the public channel-layout validator."
+          },
+          {
+            "file": "libavfilter/avfiltergraph.c",
+            "line": 52,
+            "function": "filtergraph_options",
+            "code_snippet": "{ \"threads\", \"Maximum number of threads\", ..., 0, INT_MAX, ... }",
+            "note": "The public graph option accepts 65,536 filter threads."
+          },
+          {
+            "file": "libavfilter/af_asoftclip.c",
+            "line": 449,
+            "function": "filter_frame",
+            "code_snippet": "ff_filter_execute(ctx, filter_channels, &td, NULL, FFMIN(channels, ff_filter_get_nb_threads(ctx)));",
+            "note": "The framework therefore dispatches 65,536 jobs for 65,536 channels."
+          },
+          {
+            "file": "libavfilter/af_asoftclip.c",
+            "line": 413,
+            "function": "filter_channels",
+            "code_snippet": "const int start = (channels * jobnr) / nb_jobs;",
+            "note": "At job 32,768, UBSan reports the exact 2,147,483,648 product; wrapping produces start -32,768 and end -32,767."
+          },
+          {
+            "file": "libavfilter/af_asoftclip.c",
+            "line": 152,
+            "function": "filter_flt",
+            "code_snippet": "float *w = (float *)(s->frame[0]->extended_data[c]) + ...; const float *src = sptr[c]; float *dst = dptr[c];",
+            "note": "The negative channel index precedes the frame pointer arrays. ASan reports the poisoned-prefix read; the exact repair selects [32768,32769)."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/af_asoftclip.c",
+        "start": 138,
+        "end": 165
+      },
+      {
+        "path": "libavfilter/af_asoftclip.c",
+        "start": 404,
+        "end": 456
+      },
+      {
+        "path": "libavfilter/avfiltergraph.c",
+        "start": 44,
+        "end": 60
+      },
+      {
+        "path": "libavutil/channel_layout.c",
+        "start": 783,
+        "end": 807
+      },
+      {
+        "path": "libavfilter/filters.h",
+        "start": 753,
+        "end": 766
+      }
+    ]
+  },
+  {
+    "case_id": "asoftclip-oversample-count-overflow-heap-write",
+    "finding": {
+      "id": "ffmpeg-asoftclip-oversample-count-overflow-heap-write",
+      "finding_type": "heap_buffer_overflow",
+      "cwe": "CWE-190",
+      "file": "libavfilter/af_asoftclip.c",
+      "line_number": 434,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "ASoftClip multiplies an input frame's signed sample count by its public oversample factor both when allocating output and inside the sample worker. A valid one-channel planar-float frame with 67,108,865 samples occupies 268,435,460 bytes, and oversample 64 has mathematical output count 4,294,967,360. The signed product wraps to 64, so production filter_frame allocates only 256 output bytes. UBSan reports the exact allocation-count overflow. Without integer instrumentation, filter_flt writes dst[oversample*n]; at n=1, ASan reports a four-byte heap write exactly after the 256-byte allocation. Current upstream master retains the allocation, worker product, and indexed write unchanged.",
+      "code_snippet": "out = ff_get_audio_buffer(outlink, in->nb_samples * s->oversample); ... const int nb_osamples = nb_samples * oversample; ... dst[oversample * n] = src[n];",
+      "poc": "Run evaluations/run_ffmpeg_asoftclip_oversample_overflow_reproducer.py against the pinned configured tree. Its production filter_frame replay records the exact signed allocation overflow under UBSan and the first four-byte post-allocation write under ASan, and verifies that current origin/master remains vulnerable.",
+      "discovered_by": "sourcehunt:offline-dynamic-proof",
+      "vulnerability_trace": {
+        "summary": "a publicly valid large audio frame and oversample 64 wrap the output sample allocation to one sixty-fourth of the first two input samples' required span",
+        "steps": [
+          {
+            "file": "libavfilter/af_asoftclip.c",
+            "line": 85,
+            "function": "asoftclip_options",
+            "code_snippet": "{ \"oversample\", \"set oversample factor\", ..., 1, MAX_OVERSAMPLE, ... }",
+            "note": "MAX_OVERSAMPLE is 64, and the public filter option explicitly accepts it."
+          },
+          {
+            "file": "libavutil/samplefmt.c",
+            "line": 145,
+            "function": "av_samples_get_buffer_size",
+            "code_snippet": "line_size = planar ? FFALIGN(nb_samples * sample_size, align) : FFALIGN(nb_samples * sample_size * nb_channels, align);",
+            "note": "For one FLTP channel, 67,108,865 input samples require 268,435,460 bytes and pass the signed public buffer-size calculation."
+          },
+          {
+            "file": "libavfilter/af_asoftclip.c",
+            "line": 434,
+            "function": "filter_frame",
+            "code_snippet": "out = ff_get_audio_buffer(outlink, in->nb_samples * s->oversample);",
+            "note": "UBSan reports 67,108,865 times 64 overflowing; two's-complement wrapping asks the real allocator for only 64 float samples, or 256 bytes."
+          },
+          {
+            "file": "libavfilter/af_asoftclip.c",
+            "line": 144,
+            "function": "filter_flt",
+            "code_snippet": "const int nb_osamples = nb_samples * oversample;",
+            "note": "The worker repeats the same overflow and treats the short allocation as a 64-sample oversampled buffer."
+          },
+          {
+            "file": "libavfilter/af_asoftclip.c",
+            "line": 157,
+            "function": "filter_flt",
+            "code_snippet": "dst[oversample * n] = src[n];",
+            "note": "After filling indices zero through 63 for n=0, n=1 writes float index 64. ASan reports a four-byte heap write exactly at the allocation end."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/af_asoftclip.c",
+        "start": 28,
+        "end": 86
+      },
+      {
+        "path": "libavfilter/af_asoftclip.c",
+        "start": 138,
+        "end": 165
+      },
+      {
+        "path": "libavfilter/af_asoftclip.c",
+        "start": 422,
+        "end": 456
+      },
+      {
+        "path": "libavutil/samplefmt.c",
+        "start": 95,
+        "end": 130
+      }
+    ]
+  },
+  {
+    "case_id": "gsm-sample-rate-bit-rate-signed-overflow",
+    "finding": {
+      "id": "ffmpeg-gsm-sample-rate-bit-rate-signed-overflow",
+      "finding_type": "denial_of_service",
+      "cwe": "CWE-190",
+      "file": "libavformat/gsmdec.c",
+      "line_number": 85,
+      "severity": "low",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The raw GSM demuxer permits sample_rate through INT_MAX/33, then computes stream bit rate by multiplying that signed int by 33 times eight before division. At the documented maximum 65,075,262, the production numerator is 17,179,869,168. UBSan reports 264 times 65,075,262 overflowing in gsm_read_header. Ordinary wrapping produces -16 and publishes bit_rate zero instead of 107,374,182; a control that promotes the first operand to int64 publishes the mathematical result cleanly. This is retained as a low-severity explicit-configuration availability and metadata-integrity root. Current upstream master remains unchecked.",
+      "code_snippet": "st->codecpar->bit_rate = GSM_BLOCK_SIZE * 8 * c->sample_rate / GSM_BLOCK_SAMPLES;",
+      "poc": "Run evaluations/run_ffmpeg_gsm_sample_rate_overflow_reproducer.py against the pinned configured tree. It invokes the exact production header parser at the public option maximum, records the UBSan abort and ordinary zero bit rate, verifies a clean widened control, and confirms current origin/master remains unchecked.",
+      "discovered_by": "sourcehunt:terminal-ledger-plus-dynamic-proof",
+      "vulnerability_trace": {
+        "summary": "the public raw-GSM sample-rate maximum bounds only a 33-times-rate product, while header parsing multiplies by an additional eight in signed int",
+        "steps": [
+          {
+            "file": "libavformat/gsmdec.c",
+            "line": 92,
+            "function": "options",
+            "code_snippet": "{ \"sample_rate\", ..., 1, INT_MAX / GSM_BLOCK_SIZE, AV_OPT_FLAG_DECODING_PARAM }",
+            "note": "The public demuxer option accepts 65,075,262 because 33 times that value remains one below INT_MAX."
+          },
+          {
+            "file": "libavformat/gsmdec.c",
+            "line": 85,
+            "function": "gsm_read_header",
+            "code_snippet": "st->codecpar->bit_rate = GSM_BLOCK_SIZE * 8 * c->sample_rate / GSM_BLOCK_SAMPLES;",
+            "note": "All operands are signed int before assignment to the int64 bit_rate field. UBSan reports the exact 264-times-65,075,262 overflow."
+          },
+          {
+            "file": "libavformat/gsmdec.c",
+            "line": 85,
+            "function": "gsm_read_header",
+            "code_snippet": "GSM_BLOCK_SIZE * 8 * c->sample_rate / GSM_BLOCK_SAMPLES",
+            "note": "Ordinary wrapping makes the numerator -16 and integer division publishes zero; promoting GSM_BLOCK_SIZE to int64 yields 107,374,182 without sanitizer faults."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/gsmdec.c",
+        "start": 55,
+        "end": 97
+      }
+    ]
   }
 ]

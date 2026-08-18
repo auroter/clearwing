@@ -6028,3 +6028,60 @@ independent root.
 The two roots raise the totals to 168 confirmed root causes and 146 dynamically
 reproduced issues. Historical coverage is 2,316/4,995 (46.37%), with 2,679
 historically ranked files remaining.
+
+### Blind wave 2317–2340 and three dynamically confirmed roots
+
+The complete transferred instrumentation preserved the selector state, and
+deterministic regeneration sealed ranks 2317–2340 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_2317_2340.json` with SHA-256
+`4c5f0bf094fb259a90dad9a3c0a92acc7dd3be2f5e49198c5a538b355ddc4efd`.
+The wave completed all 24 exact paths through the replacement endpoint. It
+settled 676 model calls using 6,093,907 input tokens and 89,367 output tokens,
+6,183,274 total, and made 65 raw candidate calls. It submitted no formal
+findings.
+
+Offline review and dynamic proof confirmed three independent roots:
+
+- ASoftClip's signed channel-slice products overflow with 65,536 channels and
+  threads at job 32,768, select `[-32768,-32767)`, and produce a negative
+  channel-pointer read. Exact repair
+  `f7368f97b92a0afe8dc8368a4b6749704b740317` selects
+  `[32768,32769)` cleanly.
+- ASoftClip accepts a 67,108,865-sample FLTP frame and oversample 64, whose
+  mathematical output count is 4,294,967,360. The allocation product wraps to
+  64 samples, and the worker's second input sample writes four bytes exactly
+  beyond the resulting 256-byte heap allocation. Current upstream master
+  retains the unchecked allocation and worker products.
+- The raw GSM demuxer accepts sample rate 65,075,262 but computes its bit-rate
+  numerator in signed `int`. UBSan reports `264 * 65075262` overflowing;
+  ordinary execution publishes zero instead of 107,374,182, while an `int64_t`
+  control produces the correct value. Current upstream master remains
+  unchecked.
+
+The durable artifacts are the three corresponding C harnesses and Python
+runners under `evaluations/`. Their ignored reports pin commit
+`795bccdaf57772b1803914dee2f32d52776518e2`, record the sanitizer failures and
+controls, and all have `expected_observed=true`.
+
+The ASoftClip trajectory read the oversample allocation and worker indexing but
+never retained a candidate; the GSM trajectory did retain its multiplication
+candidate. Recall is therefore 1/3 from terminal ledgers and 0/3 from formal
+findings.
+
+The remaining candidates close under concrete contracts and bounds. OpenAL
+capture counts cannot exceed its capture buffer; AAC fixed prediction excludes
+`INT32_MIN` through normalization; AC-3 and sine-window array indices are
+codec-owned and bounded. IDCT and LoongArch transforms receive padded
+codec-owned frames. QSV A53 allocation deliberately includes its header
+prefix. H.264/H.265 VUI, ASV, and the extreme IMX allocation path reduce to
+correctness or rejected allocation rather than memory corruption.
+
+VAAPI MPEG-4 sprite counts are capped at three and GOB height stays nonzero.
+Adynamicsmooth rejects channel-layout changes before filtering; RTP stream
+indices are validated and packet ownership is synchronous. SubViewer relies on
+mandatory packet padding. ACE, APV, CDG, IRCAM, hardware-context, and the other
+format paths remain within validated size, index, padding, or ABI contracts.
+
+The three roots raise the totals to 171 confirmed root causes and 149
+dynamically reproduced issues. Historical coverage is 2,340/4,995 (46.85%),
+with 2,655 historically ranked files remaining.
