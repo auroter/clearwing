@@ -7562,5 +7562,155 @@
         "end": 1212
       }
     ]
+  },
+  {
+    "case_id": "aeval-negative-channel-heap-underread",
+    "finding": {
+      "id": "ffmpeg-aeval-negative-channel-heap-underread",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavfilter/aeval.c",
+      "line_number": 80,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The public AEVAL val(CH) expression accepts arbitrary channel numbers, but val() caps only the upper end with FFMIN((int)ch, nb_in_channels - 1). Any negative integer therefore remains negative and indexes before channel_values, whose allocation contains exactly one double per negotiated input channel. A valid mono graph configured with exprs=val(-1):channel_layout=same reads one double exactly eight bytes before its eight-byte allocation on the first sample. The production graph harness makes ASan report a heap-buffer-overflow in val(), and the unchecked value is returned directly as an output audio sample. The same lower-bound omission remains on current origin/master.",
+      "code_snippet": "return eval->channel_values[FFMIN((int)ch, eval->nb_in_channels-1)];",
+      "poc": "Run evaluations/run_ffmpeg_aeval_negative_channel_reproducer.py against an ASan-configured pinned build with CONFIG_AEVAL_FILTER=1. Its ignored report records the accepted val(-1) expression, exact one-channel allocation, eight-byte heap under-read in val(), and expected_observed=true.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "an accepted negative val() channel survives the upper-only clamp and reads one double before the exact input-channel value allocation",
+        "steps": [
+          {
+            "file": "libavfilter/aeval.c",
+            "line": 83,
+            "function": "file scope",
+            "code_snippet": "static double (* const aeval_func1[])(void *, double) = { val, NULL };",
+            "note": "The expression parser publicly exposes val(CH) as a one-argument function; the filter documentation imposes no nonnegative argument constraint."
+          },
+          {
+            "file": "libavfilter/aeval.c",
+            "line": 402,
+            "function": "aeval_config_output",
+            "code_snippet": "eval->channel_values = av_realloc_f(eval->channel_values, inlink->ch_layout.nb_channels, sizeof(*eval->channel_values));",
+            "note": "A mono input allocates exactly one eight-byte double with no leading guard element."
+          },
+          {
+            "file": "libavfilter/aeval.c",
+            "line": 433,
+            "function": "filter_frame",
+            "code_snippet": "eval->channel_values[j] = *((double *) in->extended_data[j] + i);",
+            "note": "Each valid input sample populates the exact channel array before the configured output expression is evaluated."
+          },
+          {
+            "file": "libavfilter/aeval.c",
+            "line": 439,
+            "function": "filter_frame",
+            "code_snippet": "*((double *) out->extended_data[j] + i) = av_expr_eval(eval->expr[j], eval->var_values, eval);",
+            "note": "The result of val(-1) flows directly into the output sample, so the invalid read is on the production data path."
+          },
+          {
+            "file": "libavfilter/aeval.c",
+            "line": 80,
+            "function": "val",
+            "code_snippet": "return eval->channel_values[FFMIN((int)ch, eval->nb_in_channels-1)];",
+            "note": "FFMIN(-1, 0) is -1; ASan reports an eight-byte read exactly eight bytes before the one-element allocation."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/aeval.c",
+        "start": 55,
+        "end": 155
+      },
+      {
+        "path": "libavfilter/aeval.c",
+        "start": 381,
+        "end": 442
+      }
+    ]
+  },
+  {
+    "case_id": "rtp-dv-unterminated-frame-buffer-exhaustion",
+    "finding": {
+      "id": "ffmpeg-rtp-dv-unterminated-frame-buffer-exhaustion",
+      "finding_type": "denial_of_service",
+      "cwe": "CWE-400",
+      "file": "libavformat/rtpdec_dv.c",
+      "line_number": 117,
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The RTP/DV depacketizer starts a dynamic buffer for a frame and appends every accepted payload fragment. It releases an incomplete frame only when the attacker-controlled RTP timestamp changes and publishes it only when a marker bit arrives. An in-sequence sender can therefore keep one timestamp and omit every marker indefinitely; no known fixed DV frame-size limit is enforced, so the receiver withholds output while retaining all payload bytes up to the generic dynamic buffer's INT_MAX ceiling. A production-handler proof sends 4,096 valid 2,048-byte non-marker fragments with one timestamp and observes all 8,388,608 bytes retained with zero output packets. RTP sequence validation explicitly supports 16-bit wraps, so it does not impose a frame-fragment cap. No post-pin change on the selected path adds a bound.",
+      "code_snippet": "avio_write(rtp_dv_ctx->buf, buf, len); if (!(flags & RTP_FLAG_MARKER)) return AVERROR(EAGAIN);",
+      "poc": "Run evaluations/run_ffmpeg_rtp_dv_unbounded_buffer_reproducer.py against the configured pinned tree. Its ignored report records 4,096 same-timestamp, non-marker fragments, exact eight-MiB retention, zero output packets, the generic INT_MAX ceiling, and expected_observed=true.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "a remote RTP sender can suppress both timestamp changes and marker bits while every DV fragment accumulates in one dynamic buffer toward a two-gigabyte ceiling",
+        "steps": [
+          {
+            "file": "libavformat/rtpdec.c",
+            "line": 683,
+            "function": "rtp_parse_packet_internal",
+            "code_snippet": "seq = AV_RB16(buf + 2); timestamp = AV_RB32(buf + 4);",
+            "note": "The network packet supplies the sequence, timestamp, marker flag, and payload; in-order sequence wraps are explicitly accepted by RTP statistics."
+          },
+          {
+            "file": "libavformat/rtpdec_dv.c",
+            "line": 97,
+            "function": "dv_handle_packet",
+            "code_snippet": "if (rtp_dv_ctx->buf && rtp_dv_ctx->timestamp != *timestamp) ffio_free_dyn_buf(&rtp_dv_ctx->buf);",
+            "note": "An incomplete frame is discarded only on a timestamp change, which the sender can withhold."
+          },
+          {
+            "file": "libavformat/rtpdec_dv.c",
+            "line": 108,
+            "function": "dv_handle_packet",
+            "code_snippet": "if (!rtp_dv_ctx->buf) { res = avio_open_dyn_buf(&rtp_dv_ctx->buf); ... rtp_dv_ctx->timestamp = *timestamp; }",
+            "note": "The first fragment creates an unbounded generic dynamic buffer rather than a profile-sized DV frame buffer."
+          },
+          {
+            "file": "libavformat/rtpdec_dv.c",
+            "line": 117,
+            "function": "dv_handle_packet",
+            "code_snippet": "avio_write(rtp_dv_ctx->buf, buf, len);",
+            "note": "Every accepted fragment is appended before any termination decision; the proof observes all 8,388,608 supplied bytes retained."
+          },
+          {
+            "file": "libavformat/rtpdec_dv.c",
+            "line": 121,
+            "function": "dv_handle_packet",
+            "code_snippet": "if (!(flags & RTP_FLAG_MARKER)) return AVERROR(EAGAIN);",
+            "note": "Each omitted marker requests another fragment and emits no packet, allowing indefinite accumulation and output starvation."
+          },
+          {
+            "file": "libavformat/aviobuf.c",
+            "line": 1288,
+            "function": "dyn_buf_write",
+            "code_snippet": "if (new_size < d->pos || new_size > INT_MAX) return AVERROR(ERANGE);",
+            "note": "The only generic size ceiling is INT_MAX, permitting approximately two gigabytes of retained frame data before the write path errors."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/rtpdec_dv.c",
+        "start": 89,
+        "end": 141
+      },
+      {
+        "path": "libavformat/rtpdec.c",
+        "start": 683,
+        "end": 750
+      },
+      {
+        "path": "libavformat/aviobuf.c",
+        "start": 1272,
+        "end": 1310
+      }
+    ]
   }
 ]

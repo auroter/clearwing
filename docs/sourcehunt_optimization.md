@@ -4784,3 +4784,63 @@ Direct deterministic regeneration reproduces ranks 1885–1908 exactly and
 seals ranks 1909–1932 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1909_1932.json` with SHA-256
 `8c0add0fe86e23c99f7fb0acf3d96d9aa2fde8850b73ceb4d85308faf82ad3f0`.
+
+### Blind wave 1909–1932
+
+The wave completed source-bearing work on all 24 exact paths in one pinned
+session. It settled 905 model calls using 8,734,931 input tokens and 148,483
+output tokens, 8,883,414 total, and made 177 raw candidate/finding calls. It
+submitted no formal findings.
+
+Offline adjudication and production-path proofs retain two roots. AEVAL
+publicly exposes `val(CH)` but caps only the upper channel index with
+`FFMIN((int)ch, nb_in_channels - 1)`. A valid mono graph configured with
+`val(-1)` therefore reads one double exactly eight bytes before its exact
+eight-byte `channel_values` allocation. The committed production graph harness
+makes ASan report the heap under-read in `val()` on the first sample; the value
+would otherwise flow directly into the output audio sample.
+
+RTP/DV also retains an availability root. Its depacketizer frees an incomplete
+dynamic buffer only when the sender changes timestamp and publishes it only
+when a marker arrives. An in-sequence remote sender can keep one timestamp and
+omit every marker while each payload is appended without a fixed DV-frame-size
+cap. The committed production-handler proof supplies 4,096 valid 2,048-byte
+fragments and observes all 8,388,608 bytes retained with zero output packets;
+the generic dynamic buffer permits growth toward `INT_MAX`. RTP sequence
+validation explicitly handles 16-bit wraps, so it supplies no fragment cap.
+
+The strongest remaining arithmetic and indexing leads close under concrete
+producer invariants. DPX packets allocated by the media path stay below
+`INT_MAX - AV_INPUT_BUFFER_PADDING_SIZE`, keeping its apparent `+ 19` parser
+expression representable. Generic image validation proves `3 * width * height`
+representable before LCL encoding. XL walks each reversed row from its last
+dword back to its first and then lands exactly at the next row. HCOM validates
+both children of every internal dictionary node; a leaf's unchecked right
+field is sample data, not another index. Every ACELP fixed-gain caller supplies
+the documented four-element history, and bounded CBS readers prevent the
+proposed H.264 slice-data underflow.
+
+Filter and utility candidates close similarly. Transpose excludes formats
+whose horizontal and vertical chroma subsampling differ. Edge-filter strides
+come from allocated frames, bufferqueue's full-queue replacement targets its
+last live slot, and ColorChannelMixer never dereferences absent planar alpha
+storage. AddROI's `self_size` concern requires a malformed caller-supplied
+`AVFrame` rather than media-derived side data. Side-data allocation increments
+the logical element count only after both allocations succeed. XML values are
+non-NULL by the public formatter invariant and are escaped before output.
+Base64, blackdetect, HXVS, SCC, M4V probing, hardware-context lifetime, LASX
+padding, lens correction, WNV1, and the remaining leads supplied no additional
+memory or lifetime escape. The selected paths have no post-pin security repair
+that contradicts these closures or the two retained roots.
+
+The user-supplied H.264 slice-table chain remains independent corroboration of
+`h264-slice-sentinel-collision` and is not counted again.
+
+These two roots raise the totals to 134 confirmed root causes and 115
+dynamically reproduced issues. Historical coverage is 1,932/4,995 (38.68%),
+with 3,063 historically ranked files remaining.
+
+Direct deterministic regeneration reproduces ranks 1909–1932 exactly and
+seals ranks 1933–1956 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1933_1956.json` with SHA-256
+`b1772b1aac050a1a73a69e3b9569fa284e095b2225860a58e1addccfb73b1bfe`.
