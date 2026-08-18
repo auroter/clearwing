@@ -5384,3 +5384,107 @@ Direct deterministic regeneration reproduces ranks 2101–2124 exactly and seals
 ranks 2125–2148 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_2125_2148.json` with SHA-256
 `13267e6db11fe1a6d5baf17d2c9cd04cca76745b425824568e086a720757712e`.
+
+### Blind wave 2125–2148 and six reproduced roots
+
+The wave completed source-bearing work on all 24 exact paths in one pinned
+session. It settled 943 model calls using 9,630,396 input tokens and 161,107
+output tokens, 9,791,503 total, and made 186 raw candidate/finding calls. It
+submitted no formal findings.
+
+Offline repair-diff review and sanitizer proof retain six roots. Despill has an
+independent copy of the signed slice-boundary arithmetic previously confirmed
+in Maskfun. A valid 1x2,080,410 packed-RGBA frame and 2,065 explicit graph
+threads make job 2,064 overflow; UBSan reports the production multiply and
+ASan reads 1,936 bytes before the frame. Exact repair `f7368f97b9` uses the
+int64-based `ff_slice_pos()` helper and completes the same last slice. Automatic
+threading remains capped at 16, so this is a low-severity explicit-high-thread
+root.
+
+Floodfill allocates its DFS point stack from configured link dimensions but
+traverses each current frame's dimensions. A configured 1x1 link allocates four
+`Points` records; an 8x8 dynamic frame pushes a fifth and ASan reports a
+two-byte write immediately after the 16-byte heap allocation. Exact repair
+`24c322fdb2` checks the current coordinate and multiplication domains, resizes
+for the current frame, resets both indices, and completes the fill cleanly. Its
+commit explicitly identifies an out-of-array access and a dynamic-size PGM
+proof.
+
+The libcodec2 decoder computes `frame_size * nframes` in signed `int` while
+retaining the original frame count for its output loop. A sparse valid
+107,374,184-byte mode-1300 packet contains 13,421,773 eight-byte frames;
+320 samples per frame produce 4,294,967,360 mathematical samples, which wrap to
+64. FFmpeg allocates 128 output bytes, then the first complete Codec2 frame
+writes past it. UBSan reports the production multiply and ASan reports the
+first two-byte overwrite. A proof-only Codec2 implementation supplies only the
+documented 320-sample output contract. Exact repair `705ff11c2b` rejects the
+packet before multiplication. This decoder root is independent from the
+retained `libavformat/codec2.c` option and duration arithmetic root.
+
+Ambient-viewing side-data preference exposes a separate H.264/H.265 lifetime
+root. When a container record already exists and `side_data_prefer_packet`
+selects it, `ff_frame_new_side_data_from_buf_ext()` consumes the new coded
+metadata buffer without attaching it. Vulnerable `h2645_sei_to_side_data()`
+then initializes that freed 24-byte object. The exact-source proof reproduces
+only this documented helper branch and ASan reports the first eight-byte freed
+write. Exact repair `f435ce22e1` moves all initialization before the consuming
+call, identifies a use after free, names a modified-hvcc MP4 proof, and makes
+the replay clean.
+
+Two terminal-ledger candidates also survive without a later repair. The SubRip
+muxer accepts `PTS=INT64_MAX` and duration one, then computes the end timestamp
+as unchecked signed addition. UBSan aborts at `srtenc.c:76`; current master
+remains unchanged. This is a low-severity availability and output-integrity
+root. The VC-1 test muxer unconditionally copies four WMV3 extradata bytes
+without a minimum-size check. With an exact one-byte heap allocation, ASan
+reports a four-byte read beginning at its end. Ordinary execution copies the
+three adjacent heap bytes into the output header, yielding a small disclosure;
+current master also remains unchecked.
+
+The durable artifacts are the six C reproducers and matching runners:
+`ffmpeg_despill_slice_overflow`, `ffmpeg_floodfill_dynamic_size`,
+`ffmpeg_libcodec2_sample_count`, `ffmpeg_h2645_ambient_side_data_uaf`,
+`ffmpeg_srt_timestamp_overflow`, and `ffmpeg_vc1test_missing_extradata` under
+`evaluations/`. The libcodec2 proof additionally carries its minimal external
+API header under `evaluations/ffmpeg_libcodec2_stub/`. All six ignored reports
+pin commit `795bccdaf57772b1803914dee2f32d52776518e2` and report
+`expected_observed=true`; the four repaired cases also record clean exact-source
+replays.
+
+Terminal-ledger scoring recovers four of the six mechanisms: libcodec2's
+sample-count overflow, ambient-side-data UAF, SubRip timestamp overflow, and
+VC-1 test extradata overread. Despill's trajectory explicitly concludes that
+its slice arithmetic is safe and misses the overflow. Floodfill's trajectory
+questions generic point-stack capacity but never identifies the configured-
+versus-current-frame mismatch. Effective recall is therefore 4/6 from terminal
+ledgers and 0/6 from formal findings.
+
+The remaining candidates close under framework and representation contracts.
+H.264's high-bit-depth macroblock storage explicitly reserves twice the DCT
+coefficient space plus padding; its LoongArch and VP9 kernels inherit decoder
+edge emulation and plane padding. Frame-thread task indices cannot be reused
+while outstanding because the main-thread ring-distance gate waits for the
+oldest completed slot. IAMF's stream index is rejected by generic mux packet
+validation before dispatch. Field's doubled stride and one-line bottom-field
+offset produce exactly the ceil/floor field geometry, including negative-stride
+frames.
+
+HDR Vivid's stale-count bit-length checks can accept truncated metadata, but
+the safe bit-reader prevents a memory overread and all parsed array counts fit
+their fixed public structures. H.261's widest probe reload stays inside
+mandatory probe padding, and its byte-derived log is at most seven, keeping the
+32-bit shift below 32. TrueHD substream parsing rejects `max_channel + 1` above
+the decoder's eight-channel array bound. CBS VP8 loops match their declared
+array dimensions, MPEG-2 metadata inserts a non-owned context object with no
+content reference for the fragment to release, and the remaining headers,
+wrappers, fixed-size muxers, and NVDEC feature changes expose no independent
+media-controlled memory sink.
+
+The six new roots raise the totals to 149 confirmed root causes and 128
+dynamically reproduced issues. Historical coverage is 2,148/4,995 (43.00%),
+with 2,847 historically ranked files remaining.
+
+Direct deterministic regeneration over this machine's 4,993-file tree
+reproduces ranks 2101–2148 exactly and seals ranks 2149–2172 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_2149_2172.json` with SHA-256
+`225ac08c9face721b9d673c22ceff3299a5f893da59d697eeea5bb2472afed80`.
