@@ -4881,3 +4881,65 @@ Direct deterministic regeneration reproduces ranks 1933–1956 exactly and
 seals ranks 1957–1980 in
 `evaluations/sourcehunt_ffmpeg_next_unseen_paths_1957_1980.json` with SHA-256
 `9a8c8664e9b29a8679717a044b2c6f0d8cd97c34ac0b8fcbd38154058b6d2a8f`.
+
+### Blind wave 1957–1980
+
+The wave completed source-bearing work on all 24 exact paths in one pinned
+session. It settled 922 model calls using 8,816,621 input tokens and 172,988
+output tokens, 8,989,609 total, and made 185 raw candidate/finding calls. It
+submitted no formal findings.
+
+Offline adjudication and sanitizer proofs retain two low-severity roots. Fast
+bilinear scaling computes the final source-edge position as signed `i*xInc` in
+both luma and chroma helpers. A public 40,000-to-40,032 upscale derives
+`xInc=65484`; its last product is 2,621,390,004, above `INT_MAX`. The committed
+harness compiles and executes the exact pinned C helper, and UBSan aborts on
+`40031 * 65484`. Wrapped release arithmetic can suppress the clamp and
+interpolate with a source padding byte. Exact later repair `ec2a4105e2`, which
+cites issue 21591, promotes the multiplication to `int64_t` in the C, MMXEXT,
+and VSX variants and adds the wide-edge filter regression.
+
+The Linux fbdev output exposes `xoffset` and `yoffset` over the complete signed
+int domain but performs clipping before constraining them. With a positive
+video width and `xoffset=INT_MAX`, `video_width+xoffset` overflows before the
+offscreen guard; `INT_MIN` independently overflows the unary-negation guards
+on both axes. The committed portable proof executes the exact horizontal
+expression and makes UBSan abort. Wrapped values can continue into copy-size
+and mapped-framebuffer pointer arithmetic, but full muxer execution is
+Linux-device-gated, so this is classified as a public-configuration denial of
+service rather than an arbitrary-write claim. No later repair is present.
+
+The strongest remaining parser and demuxer leads close under concrete framing
+invariants. AVS2's negative frame boundary is the generic parser's deliberate
+cross-buffer overread protocol; a boundary requiring prior bytes also implies
+the backing parser buffer. EVC checks the remaining probe and packet bytes
+before every NAL advance, SAP bounds the header position and explicitly
+terminates each datagram, and HEVC's `get_nalsize` rejects an inner length above
+the containing buffer. Dump-extradata's short-size disjunct prevents its
+`memcmp`, while SER's maximum unsigned frame count times any accepted signed
+packet size remains below `INT64_MAX` and finite input still terminates at EOF.
+
+Filter, hardware, and SIMD candidates close similarly. LUT3D pass dimensions
+and allocated output geometry are identical; its later padding change replaces
+an existing clamp rather than repairing an overread. Adynamicequalizer passes
+the sample rate, not frame sample count, as its ring capacity. Stereowiden's
+ring length is always even. Vulkan overlay's C options contain twelve ints,
+exactly matching the two three-element `ivec2` arrays, and Vulkan execution
+retains frame dependencies until fence reuse. D3D11 array indices, VDPAU VP9
+array sizes, LoongArch intrinsic indices, and ARM VP9 dispatch indices follow
+their producer or API contracts. RV40 allocates `SIZE*(SIZE+5)` temporary
+bytes, exactly the six-tap footprint, and fast-bilinear JIT code is allocated
+from a first size-only pass. Rematrix dimensions follow bounded channel
+layouts. Error strings use compile-time matching offsets, and aspect,
+smartblur, SDNS, VVC/Vulkan, and the remaining leads supplied no memory or
+lifetime escape. Other post-pin changes on these paths are API, shader-build,
+allocation-ownership, or execution-pool refactors rather than security fixes.
+
+These two roots raise the totals to 136 confirmed root causes and 117
+dynamically reproduced issues. Historical coverage is 1,980/4,995 (39.64%),
+with 3,015 historically ranked files remaining.
+
+Direct deterministic regeneration reproduces ranks 1957–1980 exactly and
+seals ranks 1981–2004 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_1981_2004.json` with SHA-256
+`329972f6fcd40f3aebfede3ce1f704e3b3701b08adba8b2d87a594d5b29ca357`.

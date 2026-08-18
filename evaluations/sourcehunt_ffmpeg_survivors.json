@@ -7712,5 +7712,153 @@
         "end": 1310
       }
     ]
+  },
+  {
+    "case_id": "hscale-fast-bilinear-edge-overflow",
+    "finding": {
+      "id": "ffmpeg-hscale-fast-bilinear-edge-overflow",
+      "finding_type": "denial_of_service",
+      "cwe": "CWE-190",
+      "file": "libswscale/hscale_fast_bilinear.c",
+      "line_number": 34,
+      "severity": "low",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The fast-bilinear luma and chroma scalers compute their final source-edge position as signed int i*xInc before shifting. A public 40,000-to-40,032-pixel upscale derives xInc=65,484 and makes the last product 2,621,390,004, above INT_MAX. The committed harness compiles and executes the exact pinned C helper and UBSan aborts at the multiplication; ordinary wrapped arithmetic can suppress the final clamp and interpolate with the source padding byte. The MMXEXT path contains the same two expressions. Exact later repair ec2a4105e2 promotes the multiplication to int64_t in the C, MMXEXT, and VSX variants and adds this wide-edge geometry as a public filter regression test.",
+      "code_snippet": "for (i=dstWidth-1; (i*xInc)>>16 >=srcW-1; i--)",
+      "poc": "Run evaluations/run_ffmpeg_hscale_fast_edge_overflow_reproducer.py against the configured pinned tree. Its ignored report records xInc=65,484, the exact 2,621,390,004 product, a UBSan abort in ff_hyscale_fast_c, and the three-architecture repair diff.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "public wide fast-bilinear geometry derives a valid fixed-point increment, the final output index multiplies it in signed int, and overflow occurs before the edge clamp can decide whether to replace padding-byte interpolation",
+        "steps": [
+          {
+            "file": "libswscale/utils.c",
+            "line": 1249,
+            "function": "sws_init_context",
+            "code_snippet": "int64_t lumXInc = (((int64_t)srcW << 16) + (dstW >> 1)) / dstW;",
+            "note": "A 40,000-to-40,032 upscale derives the accepted increment 65,484, which is stored in the scaler context after explicit INT_MAX validation."
+          },
+          {
+            "file": "libswscale/swscale.c",
+            "line": 679,
+            "function": "sws_init_swscale",
+            "code_snippet": "if (c->opts.flags & SWS_FAST_BILINEAR) { c->hyscale_fast = ff_hyscale_fast_c; c->hcscale_fast = ff_hcscale_fast_c; }",
+            "note": "The public fast_bilinear flag selects the affected production helpers."
+          },
+          {
+            "file": "libswscale/hscale_fast_bilinear.c",
+            "line": 34,
+            "function": "ff_hyscale_fast_c",
+            "code_snippet": "for (i=dstWidth-1; (i*xInc)>>16 >=srcW-1; i--)",
+            "note": "For i=40,031, signed multiplication evaluates 2,621,390,004; UBSan aborts in this exact production function."
+          },
+          {
+            "file": "libswscale/x86/hscale_fast_bilinear_simd.c",
+            "line": 278,
+            "function": "ff_hyscale_fast_mmxext",
+            "code_snippet": "for (i=dstWidth-1; (i*xInc)>>16 >=srcW-1; i--)",
+            "note": "The MMXEXT luma and chroma helpers repeat the same signed expression at lines 278 and 355."
+          },
+          {
+            "file": "libswscale/hscale_fast_bilinear.c",
+            "line": 34,
+            "function": "later repair ec2a4105e2",
+            "code_snippet": "for (i=dstWidth-1; (i*(int64_t)xInc)>>16 >=srcW-1; i--)",
+            "note": "The exact repair promotes the C, MMXEXT, and VSX position calculations and cites signed integer overflow issue #21591."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libswscale/hscale_fast_bilinear.c",
+        "start": 20,
+        "end": 55
+      },
+      {
+        "path": "libswscale/x86/hscale_fast_bilinear_simd.c",
+        "start": 265,
+        "end": 360
+      },
+      {
+        "path": "libswscale/utils.c",
+        "start": 1238,
+        "end": 1462
+      },
+      {
+        "path": "libswscale/swscale.c",
+        "start": 665,
+        "end": 687
+      }
+    ]
+  },
+  {
+    "case_id": "fbdev-extreme-offset-signed-overflow",
+    "finding": {
+      "id": "ffmpeg-fbdev-extreme-offset-signed-overflow",
+      "finding_type": "denial_of_service",
+      "cwe": "CWE-190",
+      "file": "libavdevice/fbdev_enc.c",
+      "line_number": 145,
+      "severity": "low",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The Linux fbdev output exposes xoffset and yoffset across the complete signed-int domain but performs its offscreen clipping arithmetic before constraining those values. With any positive video width and xoffset=INT_MAX, video_width+xoffset overflows before the guard can reject the frame; xoffset or yoffset equal to INT_MIN independently overflows the unary-negation checks. The committed portable proof executes the exact horizontal expression and UBSan aborts. In ordinary wrapped execution the bad values can survive into signed size arithmetic and mapped-framebuffer pointer adjustments before memcpy. Full muxer execution is Linux-device-gated, so this is retained as a low-severity public-configuration denial of service rather than an arbitrary-write claim. No later repair is present on current origin/master.",
+      "code_snippet": "int diff = (video_width + fbdev->xoffset) - fbdev->varinfo.xres;",
+      "poc": "Run evaluations/run_ffmpeg_fbdev_extreme_offset_overflow_reproducer.py against the pinned tree. It verifies the full-range public options and downstream mapped-pointer uses, then makes UBSan abort on the exact 640+INT_MAX clipping expression.",
+      "discovered_by": "sourcehunt:deepseek-v4-flash-0731",
+      "vulnerability_trace": {
+        "summary": "full-range public framebuffer offsets reach signed clipping expressions before offscreen rejection, overflow at the int extrema, and can feed mapped framebuffer pointer and copy arithmetic",
+        "steps": [
+          {
+            "file": "libavdevice/fbdev_enc.c",
+            "line": 197,
+            "function": "options",
+            "code_snippet": "{ \"xoffset\", ... AV_OPT_TYPE_INT, {.i64 = 0}, INT_MIN, INT_MAX, ENC },",
+            "note": "Both xoffset and yoffset publicly accept INT_MIN through INT_MAX."
+          },
+          {
+            "file": "libavdevice/fbdev_enc.c",
+            "line": 140,
+            "function": "fbdev_write_packet",
+            "code_snippet": "if (-fbdev->xoffset >= video_width)",
+            "note": "INT_MIN overflows unary negation in both the horizontal and vertical negative-offset guards."
+          },
+          {
+            "file": "libavdevice/fbdev_enc.c",
+            "line": 145,
+            "function": "fbdev_write_packet",
+            "code_snippet": "int diff = (video_width + fbdev->xoffset) - fbdev->varinfo.xres;",
+            "note": "With video_width=640 and xoffset=INT_MAX, UBSan aborts on the first addition before the intended offscreen return."
+          },
+          {
+            "file": "libavdevice/fbdev_enc.c",
+            "line": 151,
+            "function": "fbdev_write_packet",
+            "code_snippet": "pout += bytes_per_pixel * fbdev->xoffset;",
+            "note": "If wrapped arithmetic bypasses the guard, the original extreme offsets feed framebuffer and source pointer adjustments; yoffset has the analogous path at line 168."
+          },
+          {
+            "file": "libavdevice/fbdev_enc.c",
+            "line": 173,
+            "function": "fbdev_write_packet",
+            "code_snippet": "memcpy(pout, pin, bytes_to_copy);",
+            "note": "The adjusted pointers and signed copy length are consumed by the mapped-framebuffer row loop."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavdevice/fbdev_enc.c",
+        "start": 102,
+        "end": 179
+      },
+      {
+        "path": "libavdevice/fbdev_enc.c",
+        "start": 194,
+        "end": 219
+      }
+    ]
   }
 ]
