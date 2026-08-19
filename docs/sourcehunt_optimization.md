@@ -6085,3 +6085,45 @@ format paths remain within validated size, index, padding, or ABI contracts.
 The three roots raise the totals to 171 confirmed root causes and 149
 dynamically reproduced issues. Historical coverage is 2,340/4,995 (46.85%),
 with 2,655 historically ranked files remaining.
+
+### Blind wave 2341–2364 and three dynamically confirmed roots
+
+Deterministic regeneration sealed ranks 2341–2364 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_2341_2364.json` with SHA-256
+`e863b8d1261a0e8db94a30d7d26a4740cbd47d1a2438838692f399194ba2e714`.
+The replacement-endpoint campaign completed all 24 exact paths in 802 model
+calls, using 6,836,063 input and 95,327 output tokens (6,931,390 total). It made
+131 raw candidate calls and submitted no formal findings.
+
+Offline triage and dynamic proof confirmed three independent roots:
+
+- Crystalizer's signed channel-slice products overflow with 65,536 channels
+  and threads at job 32,768. Ordinary wrapping selects a negative channel;
+  ASan reports the pointer-array read, while exact repair
+  `f7368f97b92a0afe8dc8368a4b6749704b740317` uses `ff_slice_pos()` and is clean.
+- TTML adds packet PTS `INT64_MAX` and duration one without checking. UBSan
+  reports the overflow and ordinary execution emits a negative `end`
+  timestamp. Current upstream master remains unchecked.
+- Westwood AUD's signed uncompressed-size counter reaches 2,147,483,640 after
+  32,770 valid maximum-size packets. The next `+65532` overflows under UBSan;
+  ordinary execution stores -2,147,418,124. Current master remains unchecked.
+
+The three C harnesses and combined Python runner under `evaluations/` pin
+commit `795bccdaf57772b1803914dee2f32d52776518e2`; their ignored report records
+all expected sanitizer failures and controls with `expected_observed=true`.
+The terminal ledger retained only the Westwood mechanism, so terminal recall
+is 1/3 and formal-finding recall is 0/3.
+
+The remaining candidates close under concrete contracts and bounds. TTML
+paragraph detection validates the extradata signature length. H.264 redundant
+PPS IDs fit the 256-entry table, and qpel's 24-column temporary matches its SIMD
+overread geometry. Crystalizer's previous frame intentionally stores one sample
+per channel; color-detect reads one `uint16_t` per 16-bit pixel. FLAC setup keeps
+generic fallbacks, VAAPI VP9 slot eight cannot become a later reference, and
+DSF narrowing reaches rejecting allocation/read APIs. The AMRWB, MLP, LPC,
+fixed-DSP, UUID, bitpacked, derivative, SCC, RTP, option, and architecture
+helpers likewise remain bounded or correctness-only.
+
+The three roots raise the totals to 174 confirmed root causes and 152
+dynamically reproduced issues. Historical coverage is 2,364/4,995 (47.33%),
+with 2,631 historically ranked files remaining.

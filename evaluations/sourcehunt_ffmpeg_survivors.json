@@ -10399,5 +10399,196 @@
         "end": 97
       }
     ]
+  },
+  {
+    "case_id": "crystalizer-channel-slice-signed-overflow-oob-read",
+    "finding": {
+      "id": "ffmpeg-crystalizer-channel-slice-signed-overflow-oob-read",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-190",
+      "file": "libavfilter/af_crystalizer.c",
+      "line_number": 68,
+      "severity": "low",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "Crystalizer partitions audio channels with unchecked signed-int total-times-job products shared by its generated callbacks. A valid unspecified 65,536-channel layout and 65,536 explicitly configured graph threads dispatch job 32,768. UBSan reports 65,536 times 32,768 overflowing in the production planar-float callback. Ordinary wrapping selects channel slice [-32768,-32767), and an ASan-instrumented callback reports the poisoned negative channel-pointer-array read. Exact repair f7368f97b92a0afe8dc8368a4b6749704b740317 replaces both products with the int64-based ff_slice_pos helper and processes channel 32,768 cleanly. This is a distinct callback implementation from the earlier AEmphasis, ASoftClip, and video-filter roots fixed by the same broad commit.",
+      "code_snippet": "const int start = (channels * jobnr) / nb_jobs; const int end = (channels * (jobnr+1)) / nb_jobs; ... const type *src = s[c];",
+      "poc": "Run evaluations/run_ffmpeg_wave_2341_2364_reproducers.py against the pinned configured tree. It records the exact Crystalizer signed overflow under UBSan and the wrapped negative channel-pointer read under ASan, then compiles and runs the exact ff_slice_pos repaired source cleanly.",
+      "discovered_by": "sourcehunt:offline-repair-diff-plus-dynamic-proof",
+      "vulnerability_trace": {
+        "summary": "a public high-channel-count layout and matching graph thread count overflow Crystalizer's channel-slice product and select a channel before all three planar frame pointer arrays",
+        "steps": [
+          {
+            "file": "libavutil/channel_layout.c",
+            "line": 802,
+            "function": "av_channel_layout_check",
+            "code_snippet": "case AV_CHANNEL_ORDER_UNSPEC: return 1;",
+            "note": "A positive unspecified layout with 65,536 channels passes the public channel-layout validator."
+          },
+          {
+            "file": "libavfilter/avfiltergraph.c",
+            "line": 52,
+            "function": "filtergraph_options",
+            "code_snippet": "{ \"threads\", \"Maximum number of threads\", ..., 0, INT_MAX, ... }",
+            "note": "The public graph option accepts 65,536 filter threads."
+          },
+          {
+            "file": "libavfilter/af_crystalizer.c",
+            "line": 211,
+            "function": "filter_frame",
+            "code_snippet": "ff_filter_execute(ctx, s->filter[...], &td, NULL, FFMIN(inlink->ch_layout.nb_channels, ff_filter_get_nb_threads(ctx)));",
+            "note": "The framework therefore dispatches 65,536 jobs for 65,536 channels."
+          },
+          {
+            "file": "libavfilter/af_crystalizer.c",
+            "line": 68,
+            "function": "generated filter callback",
+            "code_snippet": "const int start = (channels * jobnr) / nb_jobs;",
+            "note": "At job 32,768, UBSan reports the exact 2,147,483,648 product; wrapping produces start -32,768 and end -32,767."
+          },
+          {
+            "file": "libavfilter/af_crystalizer.c",
+            "line": 97,
+            "function": "filter_noinverse_fltp_clip",
+            "code_snippet": "const type *src = s[c]; type *dst = d[c]; type *prv = p[c];",
+            "note": "The negative channel index precedes each frame pointer array. ASan reports the poisoned-prefix read; the exact repair selects [32768,32769)."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavfilter/af_crystalizer.c",
+        "start": 46,
+        "end": 119
+      },
+      {
+        "path": "libavfilter/af_crystalizer.c",
+        "start": 178,
+        "end": 218
+      },
+      {
+        "path": "libavfilter/avfiltergraph.c",
+        "start": 44,
+        "end": 60
+      },
+      {
+        "path": "libavutil/channel_layout.c",
+        "start": 783,
+        "end": 807
+      },
+      {
+        "path": "libavfilter/filters.h",
+        "start": 753,
+        "end": 766
+      }
+    ]
+  },
+  {
+    "case_id": "ttml-end-timestamp-signed-overflow",
+    "finding": {
+      "id": "ffmpeg-ttml-end-timestamp-signed-overflow",
+      "finding_type": "denial_of_service",
+      "cwe": "CWE-190",
+      "file": "libavformat/ttmlenc.c",
+      "line_number": 172,
+      "severity": "low",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The TTML muxer's paragraph path accepts a signed 64-bit packet PTS and duration, then adds them without checking overflow. The public pair PTS=INT64_MAX and duration=1 reaches ttml_write_packet and makes UBSan abort on the exact end-timestamp expression. Ordinary execution wraps and emits a malformed negative end attribute. This is retained as a low-severity remux/configuration availability and output-integrity root. Current upstream master still contains the unchecked addition.",
+      "code_snippet": "ttml_write_time(pb, \"        end\", pkt->pts + pkt->duration);",
+      "poc": "Run evaluations/run_ffmpeg_wave_2341_2364_reproducers.py against the pinned configured tree. It passes INT64_MAX and one to the exact production TTML packet writer, records the UBSan signed-overflow abort, observes the wrapped negative end timestamp, and confirms current master remains unchecked.",
+      "discovered_by": "sourcehunt:offline-dynamic-proof",
+      "vulnerability_trace": {
+        "summary": "individually representable packet PTS and duration values overflow when the TTML paragraph writer computes the subtitle end timestamp",
+        "steps": [
+          {
+            "file": "libavformat/ttmlenc.c",
+            "line": 135,
+            "function": "ttml_write_header",
+            "code_snippet": "ttml_ctx->input_type = ff_is_ttml_stream_paragraph_based(st->codecpar) ? PACKET_TYPE_PARAGRAPH : PACKET_TYPE_DOCUMENT;",
+            "note": "A supported paragraph-based TTML stream selects the timestamp-emitting packet path."
+          },
+          {
+            "file": "libavformat/ttmlenc.c",
+            "line": 167,
+            "function": "ttml_write_packet",
+            "code_snippet": "case PACKET_TYPE_PARAGRAPH:",
+            "note": "The muxer writes begin and end attributes directly from the packet timestamps."
+          },
+          {
+            "file": "libavformat/ttmlenc.c",
+            "line": 172,
+            "function": "ttml_write_packet",
+            "code_snippet": "ttml_write_time(pb, \"        end\", pkt->pts + pkt->duration);",
+            "note": "UBSan reports INT64_MAX+1 as signed integer overflow; ordinary execution passes INT64_MIN to the formatter and emits a negative end attribute."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/ttmlenc.c",
+        "start": 121,
+        "end": 190
+      }
+    ]
+  },
+  {
+    "case_id": "westwood-aud-uncompressed-size-signed-overflow",
+    "finding": {
+      "id": "ffmpeg-westwood-aud-uncompressed-size-signed-overflow",
+      "finding_type": "denial_of_service",
+      "cwe": "CWE-190",
+      "file": "libavformat/westwood_audenc.c",
+      "line_number": 100,
+      "severity": "low",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The Westwood AUD muxer validates each compressed packet against its 16-bit chunk field but accumulates the four-times uncompressed sizes in signed int. After 32,770 valid 16,383-byte packets, uncomp_size is 2,147,483,640; the final valid packet adds 65,532 and exceeds INT_MAX. UBSan aborts on the exact production addition. Ordinary execution stores -2,147,418,124 in the private counter before the trailer serializes its low 32 bits. This is retained as a low-severity large-remux availability and internal-counter-integrity root. Current upstream master remains unchecked.",
+      "code_snippet": "if (pkt->size > UINT16_MAX / 4) return AVERROR_INVALIDDATA; ... a->uncomp_size += pkt->size * 4;",
+      "poc": "Run evaluations/run_ffmpeg_wave_2341_2364_reproducers.py against the pinned configured tree. It submits 32,771 individually valid maximum-size packets, records the exact signed accumulator overflow under UBSan, observes the wrapped negative counter in ordinary execution, and confirms current master remains unchecked.",
+      "discovered_by": "sourcehunt:terminal-ledger-plus-dynamic-proof",
+      "vulnerability_trace": {
+        "summary": "a valid sequence of individually bounded AUD packets overflows the muxer's signed uncompressed-size accumulator",
+        "steps": [
+          {
+            "file": "libavformat/westwood_audenc.c",
+            "line": 40,
+            "function": "AUDMuxContext",
+            "code_snippet": "int uncomp_size; int size;",
+            "note": "The file's 32-bit uncompressed-size total is tracked in a signed int."
+          },
+          {
+            "file": "libavformat/westwood_audenc.c",
+            "line": 92,
+            "function": "wsaud_write_packet",
+            "code_snippet": "if (pkt->size > UINT16_MAX / 4) return AVERROR_INVALIDDATA;",
+            "note": "Every 16,383-byte proof packet is accepted individually and produces a 65,532-byte uncompressed chunk."
+          },
+          {
+            "file": "libavformat/westwood_audenc.c",
+            "line": 100,
+            "function": "wsaud_write_packet",
+            "code_snippet": "a->uncomp_size += pkt->size * 4;",
+            "note": "The 32,771st packet adds 65,532 to 2,147,483,640. UBSan reports the exact signed overflow; ordinary execution stores -2,147,418,124."
+          },
+          {
+            "file": "libavformat/westwood_audenc.c",
+            "line": 112,
+            "function": "wsaud_write_trailer",
+            "code_snippet": "avio_wl32(pb, a->uncomp_size);",
+            "note": "The trailer consumes the counter after the undefined signed addition."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavformat/westwood_audenc.c",
+        "start": 35,
+        "end": 115
+      }
+    ]
   }
 ]
