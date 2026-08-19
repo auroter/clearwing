@@ -6127,3 +6127,47 @@ helpers likewise remain bounded or correctness-only.
 The three roots raise the totals to 174 confirmed root causes and 152
 dynamically reproduced issues. Historical coverage is 2,364/4,995 (47.33%),
 with 2,631 historically ranked files remaining.
+
+### Blind wave 2365–2388 and the RC4 zero-key root
+
+The selector sealed ranks 2365–2388 in
+`evaluations/sourcehunt_ffmpeg_next_unseen_paths_2365_2388.json` with SHA-256
+`2f573ceff4926106b2d27ca23c434c85c75c868c9feeda0dcd38653d3ddbae77`.
+The replacement endpoint completed all 24 exact paths in 778 model calls using
+7,019,853 input and 80,176 output tokens (7,100,029 total). It made 111 raw
+candidate calls and submitted no formal findings.
+
+Offline contract review and dynamic proof confirmed one root. The public RC4
+header documents `key_bits` as any multiple of eight, while `av_rc4_init`
+rejects only nonmultiples. A zero-bit key therefore produces `keylen == 0` but
+the scheduling loop resets `j` to zero and reads `key[0]` on every iteration.
+The exact-source harness poisons the first byte beyond the logical empty key
+buffer; ASan reports the production one-byte read. Current master remains
+unchecked. The terminal ledger retained this mechanism, so terminal recall is
+1/1 and formal-finding recall is 0/1.
+
+The durable harness and runner are `ffmpeg_rc4_zero_key_reproducer.c` and
+`run_ffmpeg_rc4_zero_key_reproducer.py` under `evaluations/`. Their ignored
+report pins commit `795bccdaf57772b1803914dee2f32d52776518e2` and records
+`expected_observed=true`.
+
+The remaining leads close under concrete contracts. The post-pin PowerPC
+`yuv2planeX` repair fixes a checkasm ASan overread, but production vertical rows
+have an explicit 32-byte vector padding margin, so the speculative load does not
+escape their allocation. HEVC parsing caps both dimensions at 16,888; aptX
+duplicates its 16-tap ring; AC-3 and ACELP indices come from bounded codec-owned
+state. DirectShow creates the suspect enumerator only with a null media type,
+making its mismatched-allocation branch unreachable. Overlay's wrong input link
+can affect alpha-mode selection but not row geometry, and filter-frame layouts
+are negotiated before AContrast runs.
+
+AV1 parsing consumes checked OBU lengths, NSP/RSO use bounded I/O and initialized
+state, V308 relies on the encoder frame contract, and table printers are
+build-time-only with fixed arrays. The timefilter counter would require more
+than two billion local capture updates before overflow; it has no practical
+media or option trigger. The remaining math, DSP, LoongArch, and PowerPC helper
+leads stay within fixed buffers, generated filter positions, or codec padding.
+
+The root raises the totals to 175 confirmed root causes and 153 dynamically
+reproduced issues. Historical coverage is 2,388/4,995 (47.81%), with 2,607
+historically ranked files remaining.

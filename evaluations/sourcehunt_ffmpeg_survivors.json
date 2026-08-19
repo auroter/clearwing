@@ -10590,5 +10590,67 @@
         "end": 115
       }
     ]
+  },
+  {
+    "case_id": "rc4-zero-bit-key-oob-read",
+    "finding": {
+      "id": "ffmpeg-rc4-zero-bit-key-oob-read",
+      "finding_type": "out_of_bounds_read",
+      "cwe": "CWE-125",
+      "file": "libavutil/rc4.c",
+      "line_number": 47,
+      "severity": "low",
+      "confidence": "high",
+      "evidence_level": "crash_reproduced",
+      "description": "The public RC4 API documents key_bits as any multiple of eight, and av_rc4_init rejects only values whose low three bits are nonzero. A zero-bit key therefore passes with keylen zero. The key-scheduling loop resets j to zero on every iteration and nevertheless reads key[0], violating the resulting zero-byte key-buffer contract. An exact production-source harness poisons the first byte beyond that logical empty buffer and makes ASan report the one-byte read in av_rc4_init. This is retained as a low-severity API-triggered availability and memory-safety root; all in-tree callers use fixed positive key sizes, but current upstream master still accepts zero.",
+      "code_snippet": "int keylen = key_bits >> 3; if (key_bits & 7) return AVERROR(EINVAL); ... if (j == keylen) j = 0; y += state[i] + key[j];",
+      "poc": "Run evaluations/run_ffmpeg_rc4_zero_key_reproducer.py against the pinned configured tree. It compiles the exact rc4.c with ASan, passes the documented zero-bit key length with the byte beyond its logical empty buffer poisoned, records the production read, and confirms current master remains unchecked.",
+      "discovered_by": "sourcehunt:terminal-ledger-plus-dynamic-proof",
+      "vulnerability_trace": {
+        "summary": "a documented zero-bit public RC4 key passes the multiple-of-eight check but the key scheduler still consumes its nonexistent first byte",
+        "steps": [
+          {
+            "file": "libavutil/rc4.h",
+            "line": 47,
+            "function": "av_rc4_init public contract",
+            "code_snippet": "@param key_bits must be a multiple of 8",
+            "note": "Zero satisfies the only documented key-length restriction and implies a zero-byte key buffer."
+          },
+          {
+            "file": "libavutil/rc4.c",
+            "line": 38,
+            "function": "av_rc4_init",
+            "code_snippet": "int keylen = key_bits >> 3; if (key_bits & 7) return AVERROR(EINVAL);",
+            "note": "For key_bits zero, keylen is zero and the implementation does not reject it."
+          },
+          {
+            "file": "libavutil/rc4.c",
+            "line": 46,
+            "function": "av_rc4_init",
+            "code_snippet": "if (j == keylen) j = 0;",
+            "note": "Because both values start at zero, every key-scheduling iteration leaves j at zero."
+          },
+          {
+            "file": "libavutil/rc4.c",
+            "line": 47,
+            "function": "av_rc4_init",
+            "code_snippet": "y += state[i] + key[j];",
+            "note": "The exact instrumented source reads key[0] despite the zero-byte key length; ASan reports the poisoned one-byte read."
+          }
+        ]
+      }
+    },
+    "windows": [
+      {
+        "path": "libavutil/rc4.h",
+        "start": 37,
+        "end": 63
+      },
+      {
+        "path": "libavutil/rc4.c",
+        "start": 29,
+        "end": 66
+      }
+    ]
   }
 ]
